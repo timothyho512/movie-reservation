@@ -1,5 +1,6 @@
 package com.example.moviereservation.entity;
 
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
@@ -44,6 +45,7 @@ public class Theatre {
     private boolean active = true;  // Is theater operational?
 
     @OneToMany(mappedBy = "theatre")
+    @JsonManagedReference // prevent infinite recursion
     private List<Screen> screens;
 
 

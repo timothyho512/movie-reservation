@@ -1,5 +1,6 @@
 package com.example.moviereservation.entity;
 
+import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
@@ -15,6 +16,7 @@ public class Screen {
 
     @ManyToOne
     @JoinColumn(name = "theatre_id", nullable = false)
+    @JsonBackReference
     private Theatre theatre;
 
     @Column(nullable = false)
