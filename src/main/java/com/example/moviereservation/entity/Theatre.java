@@ -167,4 +167,12 @@ public class Theatre {
     public void setTotalSeats(Integer totalSeats) {
         this.totalSeats = totalSeats;
     }
+
+    public List<Screen> getScreens() {
+        return screens;
+    }
+
+    public void setScreens(List<Screen> screens) {
+        this.screens = screens;
+    }
 }
