@@ -1,5 +1,6 @@
 package com.example.moviereservation.entity;
 
+import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
@@ -13,10 +14,12 @@ public class Showtime {
 
     @ManyToOne
     @JoinColumn(name = "movie_id", nullable = false)
+    @JsonBackReference
     private Movie movie;  // Which movie is showing
 
     @ManyToOne
     @JoinColumn(name = "screen_id", nullable = false)
+    @JsonBackReference
     private Screen screen;  // Which screen it's showing in
 
     @Column(nullable = false)
@@ -55,6 +58,17 @@ public class Showtime {
         this.availableSeats = this.totalSeats;
         this.status = ShowtimeStatus.UPCOMING;
         this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    @PrePersist
+    protected void onCreate() {
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
         this.updatedAt = LocalDateTime.now();
     }
 

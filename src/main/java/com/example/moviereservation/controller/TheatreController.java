@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
@@ -44,7 +45,34 @@ public class TheatreController {
         .findById(id)
         .map(
             theatre -> {
-              theatre.setName(theatreDetails.getName());
+                if (theatreDetails.getName() != null) {
+                    theatre.setName(theatreDetails.getName());
+                }
+                if (theatreDetails.getAddress() != null) {
+                    theatre.setAddress(theatreDetails.getAddress());
+                }
+                if (theatreDetails.getCity() != null) {
+                    theatre.setCity(theatreDetails.getCity());
+                }
+                if (theatreDetails.getState() != null) {
+                    theatre.setState(theatreDetails.getState());
+                }
+                if (theatreDetails.getCountry() != null) {
+                    theatre.setCountry(theatreDetails.getCountry());
+                }
+                if (theatreDetails.getPostalCode() != null) {
+                    theatre.setPostalCode(theatreDetails.getPostalCode());
+                }
+                if (theatreDetails.getPhoneNumber() != null) {
+                    theatre.setPhoneNumber(theatreDetails.getPhoneNumber());
+                }
+                if (theatreDetails.getTotalScreens() != null) {
+                    theatre.setTotalScreens(theatreDetails.getTotalScreens());
+                }
+                if (theatreDetails.getTotalSeats() != null) {
+                    theatre.setTotalSeats(theatreDetails.getTotalSeats());
+                }
+                theatre.setUpdatedAt(java.time.LocalDateTime.now());
               Theatre updatedTheatre = theatreRepository.save(theatre);
               return ResponseEntity.ok(updatedTheatre);
             })

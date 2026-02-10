@@ -1,7 +1,9 @@
 package com.example.moviereservation.controller;
 
+import com.example.moviereservation.dto.ReservationRequest;
 import com.example.moviereservation.entity.Reservation;
 import com.example.moviereservation.repository.ReservationRepository;
+import com.example.moviereservation.service.ReservationService;
 import org.apache.coyote.Response;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -14,50 +16,38 @@ import java.util.List;
 @RequestMapping("/api/reservations")
 public class ReservationController {
     @Autowired
-    private ReservationRepository reservationRepository;
+    private ReservationService reservationService;
 
     // GET /api/reservations - Get all reservations
     @GetMapping
-    public List<Reservation> getAllReservations() {
-        return reservationRepository.findAll();
+    public ResponseEntity<List<Reservation>> getAllReservations() {
+        return ResponseEntity.ok(reservationService.getAllReservations());
     }
 
     // Get /api/reservations/{id} - Get reservation by ID
     @GetMapping("/{id}")
-    public ResponseEntity<Reservation> getReservationByid(@PathVariable Long id) {
-        return reservationRepository.findById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<Reservation> getReservationById(@PathVariable Long id) {
+        return ResponseEntity.ok(reservationService.getReservationById(id));
     }
 
     // POST /api/reservations = Create new reservation
     @PostMapping
-    public ResponseEntity<Reservation> createReservation(@RequestBody Reservation reservation) {
-        Reservation savedReservation = reservationRepository.save(reservation);
-        return ResponseEntity.status(HttpStatus.CREATED).body(savedReservation);
+    public ResponseEntity<Reservation> createReservation(@RequestBody ReservationRequest request) {
+        Reservation reservation = reservationService.createReservation(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(reservation);
     }
 
     // Put /api/reservations/{id} - Update reservation
     @PutMapping("/{id}")
-    public ResponseEntity<Reservation> updateReservation(@PathVariable Long id, @RequestBody Reservation reservationDetails) {
-    return reservationRepository
-        .findById(id)
-        .map(
-            reservation -> {
-              reservation.setStatus(reservationDetails.getStatus());
-              Reservation updatedReservation = reservationRepository.save(reservation);
-              return ResponseEntity.ok(updatedReservation);
-            })
-        .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<Reservation> updateReservation(@PathVariable Long id, @RequestBody ReservationRequest request) {
+        Reservation reservation = reservationService.updateReservation(id, request);
+        return ResponseEntity.ok(reservation);
     }
 
     // DELETE /api/reservations/{id} - Delete reservation
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteReservation(@PathVariable Long id) {
-        if (reservationRepository.existsById(id)) {
-            reservationRepository.deleteById(id);
-            return ResponseEntity.noContent().build();
-        }
-        return ResponseEntity.notFound().build();
+        reservationService.deleteReservation(id);
+        return ResponseEntity.noContent().build();
     }
 }

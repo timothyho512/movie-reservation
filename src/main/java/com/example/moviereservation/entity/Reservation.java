@@ -21,8 +21,16 @@ public class Reservation {
     @JoinColumn(name = "showtime_id", nullable = false)
     private Showtime showtime;  // Which showtime was booked
 
-    @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<ReservationSeat> seats = new ArrayList<>();
+//    @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = true)
+//    private List<ReservationSeat> seats = new ArrayList<>();
+
+    @ManyToMany
+    @JoinTable(
+            name = "reservation_seats",
+            joinColumns = @JoinColumn(name = "reservation_id"),
+            inverseJoinColumns = @JoinColumn(name = "seat_id")
+    )
+    private List<Seat> seats;
 
     @Column(nullable = false, unique = true)
     private String bookingReference;  // e.g., "BK20260204001"
@@ -49,7 +57,7 @@ public class Reservation {
 
     public Reservation() {}
 
-    public Reservation(User user, Showtime showtime, List<ReservationSeat> seats, String bookingReference, BigDecimal totalPrice) {
+    public Reservation(User user, Showtime showtime, List<Seat> seats, String bookingReference, BigDecimal totalPrice) {
         this.user = user;
         this.showtime = showtime;
         this.seats = seats;
@@ -59,6 +67,16 @@ public class Reservation {
         this.status = ReservationStatus.PENDING;
         this.paymentStatus = PaymentStatus.PENDING;
         this.bookingTime = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    @PrePersist
+    protected void onCreate() {
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -86,11 +104,11 @@ public class Reservation {
         this.showtime = showtime;
     }
 
-    public List<ReservationSeat> getSeats() {
+    public List<Seat> getSeats() {
         return seats;
     }
 
-    public void setSeats(List<ReservationSeat> seats) {
+    public void setSeats(List<Seat> seats) {
         this.seats = seats;
     }
 
