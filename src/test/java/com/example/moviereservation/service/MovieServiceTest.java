@@ -1,4 +1,3 @@
 package com.example.moviereservation.service;
 
-public class MovieServiceTest {
-}
+public class MovieServiceTest {}

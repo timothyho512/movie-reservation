@@ -1,7 +1,9 @@
 package com.example.moviereservation.controller;
 
+import com.example.moviereservation.dto.TheatreRequest;
 import com.example.moviereservation.entity.Theatre;
 import com.example.moviereservation.repository.TheatreRepository;
+import com.example.moviereservation.service.TheatreService;
 import org.apache.coyote.Response;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -15,77 +17,37 @@ import java.util.List;
 @RequestMapping("/api/theatres")
 public class TheatreController {
     @Autowired
-    private TheatreRepository theatreRepository;
+    private TheatreService theatreService;
 
-    // GET /api/theatres - Get all theatres
     @GetMapping
-    public List<Theatre> getAllTheatres() {
-        return theatreRepository.findAll();
+    public ResponseEntity<List<Theatre>> getAllTheatres() {
+        return ResponseEntity.ok(theatreService.getAllTheatres());
     }
 
     // Get /api/theatres/{id} - Get theatre by ID
     @GetMapping("/{id}")
     public ResponseEntity<Theatre> getTheatreById(@PathVariable Long id) {
-        return theatreRepository.findById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.ok(theatreService.getTheatreById(id));
     }
 
     // POST /api/theatres = Create new theatre
     @PostMapping
-    public ResponseEntity<Theatre> createTheatre(@RequestBody Theatre theatre) {
-        Theatre savedTheatre = theatreRepository.save(theatre);
+    public ResponseEntity<Theatre> createTheatre(@RequestBody TheatreRequest request) {
+        Theatre savedTheatre = theatreService.createTheatre(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(savedTheatre);
     }
 
     // Put /api/theatres/{id} - Update theatre
     @PutMapping("/{id}")
-    public ResponseEntity<Theatre> updateTheatre(@PathVariable Long id, @RequestBody Theatre theatreDetails) {
-    return theatreRepository
-        .findById(id)
-        .map(
-            theatre -> {
-                if (theatreDetails.getName() != null) {
-                    theatre.setName(theatreDetails.getName());
-                }
-                if (theatreDetails.getAddress() != null) {
-                    theatre.setAddress(theatreDetails.getAddress());
-                }
-                if (theatreDetails.getCity() != null) {
-                    theatre.setCity(theatreDetails.getCity());
-                }
-                if (theatreDetails.getState() != null) {
-                    theatre.setState(theatreDetails.getState());
-                }
-                if (theatreDetails.getCountry() != null) {
-                    theatre.setCountry(theatreDetails.getCountry());
-                }
-                if (theatreDetails.getPostalCode() != null) {
-                    theatre.setPostalCode(theatreDetails.getPostalCode());
-                }
-                if (theatreDetails.getPhoneNumber() != null) {
-                    theatre.setPhoneNumber(theatreDetails.getPhoneNumber());
-                }
-                if (theatreDetails.getTotalScreens() != null) {
-                    theatre.setTotalScreens(theatreDetails.getTotalScreens());
-                }
-                if (theatreDetails.getTotalSeats() != null) {
-                    theatre.setTotalSeats(theatreDetails.getTotalSeats());
-                }
-                theatre.setUpdatedAt(java.time.LocalDateTime.now());
-              Theatre updatedTheatre = theatreRepository.save(theatre);
-              return ResponseEntity.ok(updatedTheatre);
-            })
-        .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<Theatre> updateTheatre(@PathVariable Long id, @RequestBody TheatreRequest request) {
+        Theatre updatedTheatre = theatreService.updateTheatre(id, request);
+        return ResponseEntity.ok(updatedTheatre);
     }
 
     // DELETE /api/theatres/{id} - Delete theatre
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteTheatre(@PathVariable Long id) {
-        if (theatreRepository.existsById(id)) {
-            theatreRepository.deleteById(id);
-            return ResponseEntity.noContent().build();
-        }
-        return ResponseEntity.notFound().build();
+        theatreService.deleteTheatre(id);
+        return ResponseEntity.noContent().build();
     }
 }

@@ -37,7 +37,7 @@ public class Screen {
 
     }
 
-    public Screen(String name, Theatre theatre, Integer totalSeats, Integer rows, Integer seatsPerRow, ScreenType screenType) {
+    public Screen(String name, Theatre theatre, Integer totalSeats, ScreenType screenType) {
         this.name = name;
         this.theatre = theatre;
         this.totalSeats = totalSeats;
