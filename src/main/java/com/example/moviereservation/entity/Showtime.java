@@ -14,12 +14,12 @@ public class Showtime {
 
     @ManyToOne
     @JoinColumn(name = "movie_id", nullable = false)
-    @JsonBackReference
+    @JsonBackReference // proabably can delete this as
     private Movie movie;  // Which movie is showing
 
     @ManyToOne
     @JoinColumn(name = "screen_id", nullable = false)
-    @JsonBackReference
+    @JsonBackReference // probably can delete this
     private Screen screen;  // Which screen it's showing in
 
     @Column(nullable = false)

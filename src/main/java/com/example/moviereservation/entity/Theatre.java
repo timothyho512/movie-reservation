@@ -35,6 +35,8 @@ public class Theatre {
     private String phoneNumber;
 
     private Integer totalScreens;  // Number of screens/halls in this theater
+    // totalScreens is hardcoded here which we might not wnat
+    // As this is a computed field, it should be computed instead
 
     private Integer totalSeats;    // Total seats across all screens, derivable, so tradeoff is do we need to fastread, if yea then this is useful, and if it is changed then we need to be careful that it is consistent
 

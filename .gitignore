@@ -42,3 +42,4 @@ out/
 .env.*.local
 
 *.puml
+.DS_Store

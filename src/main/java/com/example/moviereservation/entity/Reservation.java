@@ -14,8 +14,11 @@ public class Reservation {
     private Long id;
 
     @ManyToOne
-    @JoinColumn(name = "user_id", nullable = false)
+    @JoinColumn(name = "user_id")
     private User user;  // Who made the booking
+
+    @Column(name = "guest_email")
+    private String guestEmail;  // For guest bookings without a user account
 
     @ManyToOne
     @JoinColumn(name = "showtime_id", nullable = false)
@@ -43,7 +46,7 @@ public class Reservation {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private ReservationStatus status;  // PENDING, CONFIRMED, CANCELLED, COMPLETED
+    private ReservationStatus status;  // PENDING, CONFIRMED, CANCELLED, COMPLETED, if pass showtime, then it is COMPLETED
 
     @Enumerated(EnumType.STRING)
     private PaymentStatus paymentStatus;  // PENDING, PAID, REFUNDED, FAILED
@@ -57,8 +60,9 @@ public class Reservation {
 
     public Reservation() {}
 
-    public Reservation(User user, Showtime showtime, List<Seat> seats, String bookingReference, BigDecimal totalPrice) {
+    public Reservation(User user, String guestEmail, Showtime showtime, List<Seat> seats, String bookingReference, BigDecimal totalPrice) {
         this.user = user;
+        this.guestEmail = guestEmail;
         this.showtime = showtime;
         this.seats = seats;
         this.bookingReference = bookingReference;
@@ -80,6 +84,15 @@ public class Reservation {
         this.updatedAt = LocalDateTime.now();
     }
 
+    // helper function
+    public boolean isGuestReservation() {
+        return user == null && guestEmail != null;
+    }
+
+    public boolean isRegisteredUserReservation() {
+        return user != null && guestEmail == null;
+    }
+
     public Long getId() {
         return id;
     }
@@ -94,6 +107,14 @@ public class Reservation {
 
     public void setUser(User user) {
         this.user = user;
+    }
+
+    public String getGuestEmail() {
+        return guestEmail;
+    }
+
+    public void setGuestEmail(String guestEmail) {
+        this.guestEmail = guestEmail;
     }
 
     public Showtime getShowtime() {
@@ -175,4 +196,11 @@ public class Reservation {
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
     }
+
+    // the status column is important because if it is completed, then we might not want to tdelete this row immediately
+    // at some point we might want to have a scheduled task to delete old completed reservations after a certain period of time, or we can just keep them for historical records and analytics purposes
+    // and this could as well deleted the row in reservation_seats,
+    
+    // reservation_seats is a join table with column reservation_id and seat_id, 
+
 }

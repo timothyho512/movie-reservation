@@ -7,6 +7,7 @@ import java.util.List;
 
 public class ReservationRequest {
     private Long userId;
+    private String guestEmail;
     private Long showtimeId;
     private List<Long> seatIds;
     private ReservationStatus status;
@@ -16,8 +17,9 @@ public class ReservationRequest {
     public ReservationRequest() {
     }
 
-    public ReservationRequest(Long userId, Long showtimeId, List<Long> seatIds) {
+    public ReservationRequest(Long userId, String guestEmail, Long showtimeId, List<Long> seatIds) {
         this.userId = userId;
+        this.guestEmail = guestEmail;
         this.showtimeId = showtimeId;
         this.seatIds = seatIds;
     }
@@ -29,6 +31,14 @@ public class ReservationRequest {
 
     public void setUserId(Long userId) {
         this.userId = userId;
+    }
+
+    public String getGuestEmail() {
+        return guestEmail;
+    }
+
+    public void setGuestEmail(String guestEmail) {
+        this.guestEmail = guestEmail;
     }
 
     public Long getShowtimeId() {

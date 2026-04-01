@@ -39,9 +39,16 @@ public class ReservationService {
     }
 
     public Reservation createReservation(ReservationRequest request) {
-        // Find user
-        User user = userRepository.findById(request.getUserId())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + request.getUserId()));
+        User user = null;
+        if (request.getUserId() != null) {
+            // Find user
+            user = userRepository.findById(request.getUserId())
+                    .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + request.getUserId()));
+        }
+
+        String guestEmail = request.getGuestEmail();
+
+        validateReservationIdentity(user, guestEmail);
 
         // Find showtime
         Showtime showtime = showtimeRepository.findById(request.getShowtimeId())
@@ -64,6 +71,7 @@ public class ReservationService {
         // Create reservation
         Reservation reservation = new Reservation();
         reservation.setUser(user);
+        reservation.setGuestEmail(guestEmail);
         reservation.setShowtime(showtime);
         reservation.setSeats(seats);
         reservation.setBookingReference(bookingReference);
@@ -106,4 +114,18 @@ public class ReservationService {
 
         reservationRepository.delete(reservation);
     }
+
+
+    // Helper function
+    private void validateReservationIdentity(User user, String guestEmail) {
+    boolean hasUser = user != null;
+    boolean hasGuestEmail = guestEmail != null && !guestEmail.isBlank();
+
+    if (hasUser == hasGuestEmail) {
+        throw new IllegalArgumentException(
+                "Exactly one of user or guestEmail must be provided"
+        );
+    }
+}
+
 }
