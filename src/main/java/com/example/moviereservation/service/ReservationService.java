@@ -88,6 +88,34 @@ public class ReservationService {
         return reservationRepository.save(reservation);
     }
 
+    public Reservation createReservation(User user, String guestEmail, Showtime showtime, List<Seat> seats) {
+        // redundant check, but just to be safe
+        validateReservationIdentity(user, guestEmail);
+
+        // Calculate total price
+        BigDecimal totalPrice = seats.stream()
+                .map(Seat::getBasePrice)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // Generate booking reference
+        String bookingReference = "BK" + System.currentTimeMillis();
+
+        // Create reservation
+        Reservation reservation = new Reservation();
+        reservation.setUser(user);
+        reservation.setGuestEmail(guestEmail);
+        reservation.setShowtime(showtime);
+        reservation.setSeats(seats);
+        reservation.setBookingReference(bookingReference);
+        reservation.setNumberOfSeats(seats.size());
+        reservation.setTotalPrice(totalPrice);
+        reservation.setStatus(ReservationStatus.PENDING);
+        reservation.setPaymentStatus(PaymentStatus.PENDING);
+        reservation.setBookingTime(LocalDateTime.now());
+
+        return reservationRepository.save(reservation);
+    }
+
     public Reservation updateReservation(Long id, ReservationRequest request) {
         Reservation reservation = getReservationById(id);
 

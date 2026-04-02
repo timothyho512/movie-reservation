@@ -17,6 +17,7 @@ public class CheckoutConfirmResponse {
     public CheckoutConfirmResponse() {
     }
 
+    // may need refinement here
     public CheckoutConfirmResponse(Long reservationId, String bookingReference, ReservationStatus status, BigDecimal totalPrice, List<Long> seatIds, String message) {
         this.reservationId = reservationId;
         this.bookingReference = bookingReference;

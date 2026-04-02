@@ -50,6 +50,18 @@ public class GlobalExceptionHandler {
         );
     }
 
+    @ExceptionHandler(CheckoutExpiredException.class)
+    public ResponseEntity<ApiError> handleCheckoutExpired(
+                CheckoutExpiredException ex,
+                HttpServletRequest request
+        ) {
+        return buildErrorResponse(
+                HttpStatus.GONE,
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        }
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiError> handleDataIntegrityViolation(
             DataIntegrityViolationException ex,
