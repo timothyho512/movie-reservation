@@ -16,10 +16,11 @@ public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
             FROM SeatLock sl
             WHERE sl.seat.id = :seatId
                 AND sl.showtime.id = :showtimeId
-                AND sl.expiresAt > CURRENT_TIMESTAMP
-                AND sl.status IN (
-                    com.example.moviereservation.entity.LockStatus.LOCKED,
-                    com.example.moviereservation.entity.LockStatus.CONVERTED_TO_RESERVATION
+                AND (
+                    (sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
+                        AND sl.expiresAt > CURRENT_TIMESTAMP)
+                    OR sl.status = com.example.moviereservation.entity.LockStatus.PROCESSING
+                    OR sl.status = com.example.moviereservation.entity.LockStatus.CONVERTED_TO_RESERVATION
                 )
             """)
     boolean existsLockedSeatForShowtime(@Param("showtimeId") Long showtimeId, @Param("seatId") Long seatId);
@@ -69,5 +70,35 @@ public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
                             @Param("seatId") Long seatId,
                             @Param("userId") Long userId,
                             @Param("sessionId") String sessionId);
+
+    @Modifying
+    @Query("""
+        UPDATE SeatLock sl
+        SET sl.status = com.example.moviereservation.entity.LockStatus.EXPIRED
+        WHERE sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
+        AND sl.expiresAt < CURRENT_TIMESTAMP
+    """)
+    int expireTimedOutLocks();
+
+    @Modifying
+    @Query("""
+        UPDATE SeatLock sl
+        SET sl.status = com.example.moviereservation.entity.LockStatus.EXPIRED
+        WHERE sl.showtime.id = :showtimeId
+        AND sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
+        AND sl.expiresAt < CURRENT_TIMESTAMP
+        AND sl.seat.id = :seatId
+        AND (
+            (:userId IS NOT NULL AND sl.user.id = :userId)
+            OR
+            (:sessionId IS NOT NULL AND sl.sessionId = :sessionId)
+        )
+    """)
+    int cancelByShowtimeIdAndSeatIdAndUserIdOrSessionId(
+            @Param("showtimeId") Long showtimeId,
+            @Param("seatId") Long seatId,
+            @Param("userId") Long userId,
+            @Param("sessionId") String sessionId
+    );
 
 }
