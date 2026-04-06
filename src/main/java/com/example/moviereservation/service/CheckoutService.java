@@ -99,10 +99,6 @@ public class CheckoutService {
             // Update the lock status to "converted to reservation"
             updateLockStatusToConverted(context.getShowtime(), context.getSeats(), context.getUser(), sessionId, guestEmail);
 
-            // Update showtime's available seats
-            context.getShowtime().setAvailableSeats(context.getShowtime().getAvailableSeats() - context.getSeats().size());
-            showtimeRepository.save(context.getShowtime());
-
             return buildConfirmResponse(reservation);
         } catch (DataIntegrityViolationException e) {
             // If not available, return an error

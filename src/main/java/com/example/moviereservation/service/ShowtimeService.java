@@ -5,14 +5,23 @@ import com.example.moviereservation.dto.ShowtimeRequest;
 import com.example.moviereservation.entity.Movie;
 import com.example.moviereservation.entity.Screen;
 import com.example.moviereservation.entity.Showtime;
+import com.example.moviereservation.entity.Seat;
 import com.example.moviereservation.entity.ShowtimeStatus;
 import com.example.moviereservation.repository.MovieRepository;
 import com.example.moviereservation.repository.ScreenRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
+import com.example.moviereservation.repository.SeatRepository;
+import com.example.moviereservation.repository.ReservationRepository;
+import com.example.moviereservation.repository.SeatLockRepository;
+import com.example.moviereservation.dto.GetAvailabilityResponse;
+import com.example.moviereservation.dto.SeatAvailabilityDto;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class ShowtimeService {
@@ -24,6 +33,15 @@ public class ShowtimeService {
 
     @Autowired
     private ScreenRepository screenRepository;
+
+    @Autowired
+    private SeatRepository seatRepository;
+
+    @Autowired
+    private ReservationRepository reservationRepository;
+
+    @Autowired
+    private SeatLockRepository seatLockRepository;
 
     public List<Showtime> getAllShowtimes() {
         return showtimeRepository.findAll();
@@ -95,5 +113,42 @@ public class ShowtimeService {
     public void deleteShowtime(Long id) {
         Showtime showtime = getShowtimeById(id);
         showtimeRepository.delete(showtime);
+    }
+
+    public GetAvailabilityResponse checkAvailability(Long showtimeId) {
+        // First check if the showtime exists
+        Showtime showtime = loadShowtimeById(showtimeId);
+
+        // get showtime's screen
+        Screen screen = showtime.getScreen();
+
+        // then get its seats
+        List<Seat> seats = getSeatsForScreenId(screen.getId());
+
+        // then its availability and return the response
+        return getSeatsAvailability(showtimeId, seats);
+    }
+
+    private Showtime loadShowtimeById(Long showtimeId) {
+        return showtimeRepository.findById(showtimeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Showtime not found with id: " + showtimeId));
+    }
+
+    private List<Seat> getSeatsForScreenId(Long screenId) {
+        return seatRepository.findByScreenId(screenId);
+    }
+
+    private GetAvailabilityResponse getSeatsAvailability(Long showtimeId, List<Seat> seats) {
+        Set<Long> reservedSeatIds = new HashSet<>(reservationRepository.findReservedSeatIdsForShowtime(showtimeId));
+        Set<Long> lockedSeatIds = new HashSet<>(seatLockRepository.findUnavailableLockedSeatIdsForShowtime(showtimeId));
+        List<SeatAvailabilityDto> availability = seats.stream()
+            .map(seat -> {
+                boolean available = !reservedSeatIds.contains(seat.getId())
+                        && !lockedSeatIds.contains(seat.getId());
+                return new SeatAvailabilityDto(seat.getId(), available);
+            })
+            .toList();
+        
+        return new GetAvailabilityResponse(showtimeId, availability);
     }
 }

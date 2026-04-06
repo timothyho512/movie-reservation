@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.example.moviereservation.entity.SeatLock;
+import java.util.List;
 
 public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
 
@@ -102,5 +103,19 @@ public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
             @Param("sessionId") String sessionId,
             @Param("guestEmail") String guestEmail
     );
+
+    @Query("""
+        SELECT sl.seat.id
+        FROM SeatLock sl
+        WHERE sl.showtime.id = :showtimeId
+        AND (
+            (sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
+                AND sl.expiresAt > CURRENT_TIMESTAMP)
+            OR sl.status = com.example.moviereservation.entity.LockStatus.PROCESSING
+            OR sl.status = com.example.moviereservation.entity.LockStatus.CONVERTED_TO_RESERVATION
+        )
+    """)
+    List<Long> findUnavailableLockedSeatIdsForShowtime(@Param("showtimeId") Long showtimeId);
+
 
 }

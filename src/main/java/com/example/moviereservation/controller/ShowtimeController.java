@@ -1,10 +1,9 @@
 package com.example.moviereservation.controller;
 
+import com.example.moviereservation.dto.GetAvailabilityResponse;
 import com.example.moviereservation.dto.ShowtimeRequest;
 import com.example.moviereservation.entity.Showtime;
-import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.service.ShowtimeService;
-import org.apache.coyote.Response;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -49,5 +48,12 @@ public class ShowtimeController {
     public ResponseEntity<Void> deleteShowtime(@PathVariable Long id) {
         showtimeService.deleteShowtime(id);
         return ResponseEntity.noContent().build();
+    }
+
+
+    // Business logic, check availability
+    @GetMapping("/{id}/available-seats")
+    public ResponseEntity<GetAvailabilityResponse> checkAvailability(@PathVariable Long id) {
+        return ResponseEntity.ok(showtimeService.checkAvailability(id));
     }
 }

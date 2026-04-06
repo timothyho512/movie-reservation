@@ -113,6 +113,10 @@ public class ReservationService {
         reservation.setPaymentStatus(PaymentStatus.PENDING);
         reservation.setBookingTime(LocalDateTime.now());
 
+        // Update showtime available seats
+        showtime.setAvailableSeats(showtime.getAvailableSeats() - seats.size());
+        showtimeRepository.save(showtime);
+
         return reservationRepository.save(reservation);
     }
 
