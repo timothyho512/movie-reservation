@@ -28,6 +28,9 @@ public class SeatLock {
     @Column(name = "session_id")
     private String sessionId;  // Alternative to user for anonymous sessions
 
+    @Column(name = "guest_email")
+    private String guestEmail;
+
     @Column(nullable = false)
     private LocalDateTime lockedAt;
 
@@ -44,15 +47,27 @@ public class SeatLock {
     public SeatLock() {
     }
 
-    public SeatLock(Seat seat, Showtime showtime, User user, String sessionId) {
+    public SeatLock(Seat seat, Showtime showtime, User user, String sessionId, String guestEmail) {
         this.seat = seat;
         this.showtime = showtime;
         this.user = user;
         this.sessionId = sessionId;
+        this.guestEmail = guestEmail;
+    }
 
-        this.lockedAt = LocalDateTime.now();
-        this.expiresAt = this.lockedAt.plusMinutes(DEFAULT_LOCK_DURATION_MINUTES);  // Default expiration time
-        this.status = LockStatus.LOCKED;
+    @PrePersist
+    public void prePersist() {
+        if (lockedAt == null) {
+            lockedAt = LocalDateTime.now();
+        }
+
+        if (expiresAt == null) {
+            expiresAt = lockedAt.plusMinutes(DEFAULT_LOCK_DURATION_MINUTES);
+        }
+
+        if (status == null) {
+            status = LockStatus.LOCKED;
+        }
     }
 
     public Long getId() {
@@ -85,6 +100,14 @@ public class SeatLock {
 
     public void setSessionId(String sessionId) {
         this.sessionId = sessionId;
+    }
+
+    public String getGuestEmail() {
+        return guestEmail;
+    }
+
+    public void setGuestEmail(String guestEmail) {
+        this.guestEmail = guestEmail;
     }
 
     public User getUser() {

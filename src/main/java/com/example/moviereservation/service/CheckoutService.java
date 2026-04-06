@@ -13,7 +13,6 @@ import com.example.moviereservation.entity.ShowtimeStatus;
 import com.example.moviereservation.entity.SeatLock;
 import com.example.moviereservation.entity.User;
 import com.example.moviereservation.entity.Reservation;
-import com.example.moviereservation.entity.LockStatus;
 import com.example.moviereservation.repository.UserRepository;
 import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
@@ -61,33 +60,16 @@ public class CheckoutService {
         // Validate request (showtimeId, seatIds, userId/guestEmail)
         validateCheckoutLockRequest(request);
 
-        Showtime showtime = showtimeRepository.findById(request.getShowtimeId())
-                .orElseThrow(() -> new ResourceNotFoundException("Showtime not found with id: " + request.getShowtimeId()));
-        
-        // Find all seats
-        List<Seat> seats = request.getSeatIds().stream()
-                .map(seatId -> seatRepository.findById(seatId)
-                        .orElseThrow(() -> new ResourceNotFoundException("Seat not found with id: " + seatId)))
-                .toList();
-
-        User user = resolveUser(request.getUserId());
-        
-        // check if showtime is bookable (not started, not cancelled)
-        isShowtimeBookable(showtime);
-        // check if the input seats is valid and not exceeding the limit
-        isSeatsExceedLimit(seats);
-        // check if the seats belong to the showtime
-        isSeatsBelongToShowtime(showtime, seats);
+        CheckoutContext context = prepareCheckoutContext(request.getShowtimeId(), request.getSeatIds(), request.getUserId());
 
         String guestEmail = request.getGuestEmail();
-        validateLockIdentity(user, guestEmail);
 
         // Check if seats are available for the showtime
-        isSeatsAvailable(showtime, seats);
+        validateSeatsAvailable(context.getShowtime(), context.getSeats());
 
         // If available, create a temporary lock (e.g., in-memory or Redis) with an expiration time (e.g., 15 minutes)
         try {
-            List<SeatLock> seatLocks = createLock(user, guestEmail, showtime, seats);
+            List<SeatLock> seatLocks = createLock(context.getUser(), guestEmail, context.getShowtime(), context.getSeats());
 
             // Return lock details (sessionId, expiresAt, lockedSeatIds) to the client
             return buildLockResponse(seatLocks);
@@ -101,43 +83,25 @@ public class CheckoutService {
     public CheckoutConfirmResponse confirmCheckout(CheckoutConfirmRequest request) {
         // Validate request (showtimeId, seatIds, userId/guestEmail, sessionId)
         validateCheckoutConfirmRequest(request);
-        // Verify the lock is still valid and matches the requested seats
-        Showtime showtime = showtimeRepository.findById(request.getShowtimeId())
-                .orElseThrow(() -> new ResourceNotFoundException("Showtime not found with id: " + request.getShowtimeId()));
-        
-        // Find all seats
-        List<Seat> seats = request.getSeatIds().stream()
-                .map(seatId -> seatRepository.findById(seatId)
-                        .orElseThrow(() -> new ResourceNotFoundException("Seat not found with id: " + seatId)))
-                .toList();
-
-        User user = resolveUser(request.getUserId());
+  
+        CheckoutContext context = prepareCheckoutContext(request.getShowtimeId(), request.getSeatIds(), request.getUserId());
 
         String sessionId = request.getSessionId();
-        
-        // usual safety checks before confirming reservation
-        // check if showtime is bookable (not started, not cancelled)
-        isShowtimeBookable(showtime);
-        // check if the input seats is valid and not exceeding the limit
-        isSeatsExceedLimit(seats);
-        // check if the seats belong to the showtime
-        isSeatsBelongToShowtime(showtime, seats);
-
         String guestEmail = request.getGuestEmail();
-        validateLockIdentity(user, guestEmail, sessionId);
+
         // change row status to "processing" to prevent other concurrent requests from using the same lock
-        markLocksAsProcessing(showtime, seats, user, sessionId);
+        markLocksAsProcessing(context.getShowtime(), context.getSeats(), context.getUser(), sessionId, guestEmail);
 
         // If valid, create a reservation in the database
         try {
-            Reservation reservation = reserveSeats(user, guestEmail, showtime, seats);
+            Reservation reservation = createReservation(context.getUser(), guestEmail, context.getShowtime(), context.getSeats());
 
             // Update the lock status to "converted to reservation"
-            updateLockStatusToConverted(showtime, seats, user, sessionId);
+            updateLockStatusToConverted(context.getShowtime(), context.getSeats(), context.getUser(), sessionId, guestEmail);
 
             // Update showtime's available seats
-            showtime.setAvailableSeats(showtime.getAvailableSeats() - seats.size());
-            showtimeRepository.save(showtime);
+            context.getShowtime().setAvailableSeats(context.getShowtime().getAvailableSeats() - context.getSeats().size());
+            showtimeRepository.save(context.getShowtime());
 
             return buildConfirmResponse(reservation);
         } catch (DataIntegrityViolationException e) {
@@ -151,169 +115,102 @@ public class CheckoutService {
         // Validate request (showtimeId, seatIds, userId/guestEmail, sessionId)
         validateCancelLockRequest(request);
 
-        Showtime showtime = showtimeRepository.findById(request.getShowtimeId())
-                .orElseThrow(() -> new ResourceNotFoundException("Showtime not found with id: " + request.getShowtimeId()));
-        
-        // Find all seats
-        List<Seat> seats = request.getSeatIds().stream()
+        CheckoutContext context = prepareCheckoutContext(request.getShowtimeId(), request.getSeatIds(), request.getUserId());
+
+        String sessionId = request.getSessionId();
+        String guestEmail = request.getGuestEmail();
+
+        cancelLocks(context.getShowtime(), context.getSeats(), context.getUser(), sessionId, guestEmail);
+
+        return buildCancelResponse("Locks cancelled successfully");
+
+    }
+
+    private Showtime loadShowtime(Long showtimeId) {
+        return showtimeRepository.findById(showtimeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Showtime not found with id: " + showtimeId));
+    }
+
+    private List<Seat> loadSeats(List<Long> seatIds) {
+        return seatIds.stream()
                 .map(seatId -> seatRepository.findById(seatId)
                         .orElseThrow(() -> new ResourceNotFoundException("Seat not found with id: " + seatId)))
                 .toList();
+    }
 
-        User user = resolveUser(request.getUserId());
+    private User loadUser(Long userId) {
+        if (userId == null) {
+            return null;
+        }
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + userId));
+    }
 
-        String sessionId = request.getSessionId();
+    private void validateCommonSeatRequest(Long showtimeId, List<Long> seatIds) {
+        if (showtimeId == null) {
+            throw new IllegalArgumentException("Showtime ID is required");
+        }
 
-        // usual check if the request they send is actually reasonable if they want to confirm booking
-        // check if showtime is bookable (not started, not cancelled)
-        isShowtimeBookable(showtime);
-        // check if the input seats is valid and not exceeding the limit
-        isSeatsExceedLimit(seats);
-        // check if the seats belong to the showtime
-        isSeatsBelongToShowtime(showtime, seats);
+        if (seatIds == null || seatIds.isEmpty()) {
+            throw new IllegalArgumentException("At least one seat ID is required");
+        }
 
-        String guestEmail = request.getGuestEmail();
-        // check if the lock exists and belongs to the user/session
-        validateLockIdentity(user, guestEmail, sessionId);
+        if (seatIds.size() != seatIds.stream().distinct().count()) {
+            throw new IllegalArgumentException("Duplicate seat IDs are not allowed");
+        }
+    }
 
-        // if valid, delete the lock to release the seats
-        try {
-            cancelLocksRows(showtime, seats, user, sessionId);
+    private void validateUserOrGuestIdentity(Long userId, String guestEmail) {
+        boolean hasUserId = userId != null;
+        boolean hasGuestEmail = guestEmail != null && !guestEmail.isBlank();
 
-            return buildCancelResponse("Locks cancelled successfully");
-        } catch (DataIntegrityViolationException e) {
-            throw new SeatUnavailableException("Failed to cancel lock: " + e.getMessage());
+        if (hasUserId == hasGuestEmail) {
+            throw new IllegalArgumentException("Exactly one of userId or guestEmail must be provided");
+        }
+
+        if (hasGuestEmail) {
+            String emailRegex = "^[A-Za-z0-9+_.-]+@(.+)$";
+            if (!guestEmail.matches(emailRegex)) {
+                throw new IllegalArgumentException("Invalid email format");
+            }
+        }
+    }
+
+    private void validateSessionIdentity(Long userId, String guestEmail, String sessionId) {
+        validateUserOrGuestIdentity(userId, guestEmail);
+        boolean hasUserId = userId != null;
+        boolean hasGuestEmail = guestEmail != null && !guestEmail.isBlank();
+        boolean hasSessionId = sessionId != null && !sessionId.isBlank();
+
+        if (hasGuestEmail && !hasSessionId) {
+            throw new IllegalArgumentException("Session ID is required for guest users");
+        }
+
+        if (hasUserId && hasSessionId) {
+            throw new IllegalArgumentException("Session ID should not be provided for registered users");
         }
     }
 
 
     // Helper method to validate lock request
     private void validateCheckoutLockRequest(CheckoutLockRequest request) throws IllegalArgumentException {
-        // Validate showtimeId, seatIds, and either userId or guestEmail
+        validateCommonSeatRequest(request.getShowtimeId(), request.getSeatIds());
+        validateUserOrGuestIdentity(request.getUserId(), request.getGuestEmail());
 
-        if (request.getShowtimeId() == null) {
-            throw new IllegalArgumentException("Showtime ID is required");
-        }
-        
-        if (request.getSeatIds() == null || request.getSeatIds().isEmpty()) {
-            throw new IllegalArgumentException("At least one seat ID is required");
-        }
-
-        // seatIds should not contain duplicates
-        if (request.getSeatIds().size() != request.getSeatIds().stream().distinct().count()) {
-            throw new IllegalArgumentException("Duplicate seat IDs are not allowed");
-        }
-
-        // // seatIds should be positive numbers
-        // if (request.getSeatIds().stream().anyMatch(seatId -> seatId <= 0)) {
-        //     throw new IllegalArgumentException("Seat IDs must be positive numbers");
-        // }
-
-        // seats should be for the same showtime - this can be checked later when we fetch the seat entities
-
-        if (request.getUserId() == null && (request.getGuestEmail() == null || request.getGuestEmail().isEmpty())) {
-            throw new IllegalArgumentException("Either user ID or guest email is required");
-        }
-
-        // if email is provided, it should be in a valid format
-        if (request.getGuestEmail() != null && !request.getGuestEmail().isEmpty()) {
-            String emailRegex = "^[A-Za-z0-9+_.-]+@(.+)$";
-            if (!request.getGuestEmail().matches(emailRegex)) {
-                throw new IllegalArgumentException("Invalid email format");
-            }
-        }
     }
 
     private void validateCheckoutConfirmRequest(CheckoutConfirmRequest request) throws IllegalArgumentException {
-        // Validate showtimeId, seatIds, userId/guestEmail, and sessionId
-        if (request.getShowtimeId() == null) {
-            throw new IllegalArgumentException("Showtime ID is required");
-        }
-        
-        if (request.getSeatIds() == null || request.getSeatIds().isEmpty()) {
-            throw new IllegalArgumentException("At least one seat ID is required");
-        }
-
-        // seatIds should not contain duplicates
-        if (request.getSeatIds().size() != request.getSeatIds().stream().distinct().count()) {
-            throw new IllegalArgumentException("Duplicate seat IDs are not allowed");
-        }
-
-        // // seatIds should be positive numbers
-        // if (request.getSeatIds().stream().anyMatch(seatId -> seatId <= 0)) {
-        //     throw new IllegalArgumentException("Seat IDs must be positive numbers");
-        // }
-
-        // seats should be for the same showtime - this can be checked later when we fetch the seat entities
-
-        if (request.getUserId() == null && (request.getGuestEmail() == null || request.getGuestEmail().isEmpty())) {
-            throw new IllegalArgumentException("Either user ID or guest email is required");
-        }
-
-        // if email is provided, it should be in a valid format
-        if (request.getGuestEmail() != null && !request.getGuestEmail().isEmpty()) {
-            String emailRegex = "^[A-Za-z0-9+_.-]+@(.+)$";
-            if (!request.getGuestEmail().matches(emailRegex)) {
-                throw new IllegalArgumentException("Invalid email format");
-            }
-        }
-
-        // cehck that sessionId is provided if guestEmail is provided, and not provided if userId is provided
-        if (request.getGuestEmail() != null && !request.getGuestEmail().isEmpty() && (request.getSessionId() == null || request.getSessionId().isEmpty())) {
-            throw new IllegalArgumentException("Session ID is required for guest users");
-        }
-
-        if (request.getUserId() != null && (request.getSessionId() != null && !request.getSessionId().isEmpty())) {
-            throw new IllegalArgumentException("Session ID should not be provided for registered users");
-        }
+        validateCommonSeatRequest(request.getShowtimeId(), request.getSeatIds());
+        validateSessionIdentity(request.getUserId(), request.getGuestEmail(), request.getSessionId());
     }
 
     private void validateCancelLockRequest(CancelLockRequest request) throws IllegalArgumentException {
-        // Validate showtimeId, seatIds, userId/guestEmail, and sessionId
-        if (request.getShowtimeId() == null) {
-            throw new IllegalArgumentException("Showtime ID is required");
-        }
-        
-        if (request.getSeatIds() == null || request.getSeatIds().isEmpty()) {
-            throw new IllegalArgumentException("At least one seat ID is required");
-        }
-
-        // seatIds should not contain duplicates
-        if (request.getSeatIds().size() != request.getSeatIds().stream().distinct().count()) {
-            throw new IllegalArgumentException("Duplicate seat IDs are not allowed");
-        }
-
-        // // seatIds should be positive numbers
-        // if (request.getSeatIds().stream().anyMatch(seatId -> seatId <= 0)) {
-        //     throw new IllegalArgumentException("Seat IDs must be positive numbers");
-        // }
-
-        // seats should be for the same showtime - this can be checked later when we fetch the seat entities
-
-        if (request.getUserId() == null && (request.getGuestEmail() == null || request.getGuestEmail().isEmpty())) {
-            throw new IllegalArgumentException("Either user ID or guest email is required");
-        }
-
-        // if email is provided, it should be in a valid format
-        if (request.getGuestEmail() != null && !request.getGuestEmail().isEmpty()) {
-            String emailRegex = "^[A-Za-z0-9+_.-]+@(.+)$";
-            if (!request.getGuestEmail().matches(emailRegex)) {
-                throw new IllegalArgumentException("Invalid email format");
-            }
-        }
-
-        // cehck that sessionId is provided if guestEmail is provided, and not provided if userId is provided
-        if (request.getGuestEmail() != null && !request.getGuestEmail().isEmpty() && (request.getSessionId() == null || request.getSessionId().isEmpty())) {
-            throw new IllegalArgumentException("Session ID is required for guest users");
-        }
-
-        if (request.getUserId() != null && (request.getSessionId() != null && !request.getSessionId().isEmpty())) {
-            throw new IllegalArgumentException("Session ID should not be provided for registered users");
-        }
+        validateCommonSeatRequest(request.getShowtimeId(), request.getSeatIds());
+        validateSessionIdentity(request.getUserId(), request.getGuestEmail(), request.getSessionId());
     }
 
 
-    private void isSeatsAvailable(Showtime showtime, List<Seat> seats) {
+    private void validateSeatsAvailable(Showtime showtime, List<Seat> seats) {
 
         // checks database row in reservation_seats join table for any of the seatIds and showtimeId that are in the request
         for (Seat seat : seats) {
@@ -331,7 +228,7 @@ public class CheckoutService {
         // If any seat is not available, throw an exception with details about which seats are unavailable
     }
 
-    private void isSeatsBelongToShowtime(Showtime showtime, List<Seat> seats) {
+    private void validateSeatsBelongToShowtime(Showtime showtime, List<Seat> seats) {
         // checks that all seatIds in the request belong to the same showtimeId
         // this is equivalent to checking if they have the same screenId
         for (Seat seat : seats) {
@@ -341,7 +238,7 @@ public class CheckoutService {
         }
     }
 
-    private void isSeatsExceedLimit(List<Seat> seats) {
+    private void validateSeatsWithinLimit(List<Seat> seats) {
         // checks that the number of seats requested does not exceed a certain limit (e.g., 10 seats per transaction)
         int seatLimit = 10; // need to put this in config later instead of hardcoding
         if (seats.size() > seatLimit) {
@@ -349,45 +246,53 @@ public class CheckoutService {
         }
     }
 
-    private void isShowtimeBookable(Showtime showtime) {
+    private void validateShowtimeBookable(Showtime showtime) {
         // checks that the showtime is in the future
         if (showtime.getStartTime().isBefore(LocalDateTime.now())) {
-            throw new IllegalArgumentException("Cannot lock seats for a showtime that has already started");
+            throw new SeatUnavailableException("Cannot lock seats for a showtime that has already started");
         }
         // check showtime status is Upcoming
         if (showtime.getStatus() != ShowtimeStatus.UPCOMING) {
-            throw new IllegalArgumentException("Cannot lock seats for a showtime that is not upcoming");
+            throw new SeatUnavailableException("Cannot lock seats for a showtime that is not upcoming");
         }
     }
 
-    private void markLocksAsProcessing(Showtime showtime, List<Seat> seats, User user, String sessionId) {
+    private void validateCommonCheckoutPreconditions(Showtime showtime, List<Seat> seats) {
+        validateShowtimeBookable(showtime);
+        validateSeatsWithinLimit(seats);
+        validateSeatsBelongToShowtime(showtime, seats);
+    }
+
+    private void markLocksAsProcessing(Showtime showtime, List<Seat> seats, User user, String sessionId, String guestEmail) {
         for (Seat seat : seats) {
             int updatedRows;
 
             if (user != null) {
                 updatedRows = seatLockRepository.markLockAsProcessingForUser(showtime.getId(), seat.getId(), user.getId());
             } else {
-                updatedRows = seatLockRepository.markLockAsProcessingForSession(showtime.getId(), seat.getId(), sessionId);
+                updatedRows = seatLockRepository.markLockAsProcessingForSession(showtime.getId(), seat.getId(), sessionId, guestEmail);
             }
 
             if (updatedRows == 0) {
-                throw new SeatUnavailableException("Seat " + seat.getId() + " is no longer available for confirmation");
+                // initially message: "Seat 1 is no longer available for confirmation"
+                throw new SeatUnavailableException("No valid active lock found for seat " + seat.getId() + " for this confirmation request");
             }
         }
     }
 
-    private void cancelLocksRows(Showtime showtime, List<Seat> seats, User user, String sessionId) {
+    private void cancelLocks(Showtime showtime, List<Seat> seats, User user, String sessionId, String guestEmail) {
         for (Seat seat : seats) {
             int cancelledRows;
-            cancelledRows = seatLockRepository.cancelByShowtimeIdAndSeatIdAndUserIdOrSessionId(
+            cancelledRows = seatLockRepository.cancelActiveLock(
                     showtime.getId(),
                     seat.getId(),
                     user != null ? user.getId() : null,
-                    sessionId
+                    sessionId,
+                    guestEmail
             );
 
             if (cancelledRows == 0) {
-                throw new SeatUnavailableException("Seat " + seat.getId() + " is no longer locked or does not belong to the user/session");
+                throw new SeatUnavailableException("No valid active lock found for seat " + seat.getId() + " for this cancellation request");
             }
         }
     }
@@ -411,6 +316,7 @@ public class CheckoutService {
                     seatLock.setUser(user);
                 } else {
                     seatLock.setSessionId(sessionId);
+                    seatLock.setGuestEmail(guestEmail);
                 }
 
                 return seatLock;
@@ -421,26 +327,17 @@ public class CheckoutService {
         return seatLockRepository.saveAll(locks);
     }
 
-    // helper function
-    private User resolveUser(Long userId) {
-        if (userId == null) {
-            return null;
-        }
-        return userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + userId));
-    }
-
-    private Reservation reserveSeats(User user, String guestEmail, Showtime showtime, List<Seat> seats) {
+    private Reservation createReservation(User user, String guestEmail, Showtime showtime, List<Seat> seats) {
         Reservation reservation = reservationService.createReservation(user, guestEmail, showtime, seats);
         return reservation;
     }
 
-    private void updateLockStatusToConverted(Showtime showtime, List<Seat> seats, User user, String sessionId) {
+    private void updateLockStatusToConverted(Showtime showtime, List<Seat> seats, User user, String sessionId, String guestEmail) {
         for (Seat seat : seats) {
             int updatedRows;
-            updatedRows = seatLockRepository.markLockAsConverted(showtime.getId(), seat.getId(), user != null ? user.getId() : null, sessionId);
+            updatedRows = seatLockRepository.markLockAsConverted(showtime.getId(), seat.getId(), user != null ? user.getId() : null, sessionId, guestEmail);
             if (updatedRows == 0) {
-                throw new SeatUnavailableException("Seat " + seat.getId() + " is no longer available for conversion");
+                throw new SeatUnavailableException("Seat " + seat.getId() + " could not be finalized for reservation");
             }
         }
     }
@@ -468,27 +365,39 @@ public class CheckoutService {
         return new CancelLockResponse(message);
     }
 
-    // Helper function
-    private void validateLockIdentity(User user, String guestEmail) {
-        boolean hasUser = user != null;
-        boolean hasGuestEmail = guestEmail != null && !guestEmail.isBlank();
+    // ===== CheckoutContext =====
 
-        if (hasUser == hasGuestEmail) {
-            throw new IllegalArgumentException(
-                    "Exactly one of user or guestEmail must be provided"
-            );
-        }
+    private CheckoutContext prepareCheckoutContext(Long showtimeId, List<Long> seatIds, Long userId) {
+        Showtime showtime = loadShowtime(showtimeId);
+        List<Seat> seats = loadSeats(seatIds);
+        User user = loadUser(userId);
+
+        validateCommonCheckoutPreconditions(showtime, seats);
+
+        return new CheckoutContext(showtime, seats, user);
     }
 
-    private void validateLockIdentity(User user, String guestEmail, String sessionId) {
-        boolean hasUser = user != null;
-        boolean hasGuestEmail = guestEmail != null && !guestEmail.isBlank();
-        boolean hasSessionId = sessionId != null && !sessionId.isBlank();
+    private static class CheckoutContext {
+        private final Showtime showtime;
+        private final List<Seat> seats;
+        private final User user;
 
-        if (hasUser == hasGuestEmail || (hasGuestEmail && !hasSessionId) || (hasUser && hasSessionId)) {
-            throw new IllegalArgumentException(
-                    "Exactly one of user or guestEmail must be provided, and sessionId must be provided for guest users and not provided for registered users"
-            );
+        private CheckoutContext(Showtime showtime, List<Seat> seats, User user) {
+            this.showtime = showtime;
+            this.seats = seats;
+            this.user = user;
+        }
+
+        public Showtime getShowtime() {
+            return showtime;
+        }
+
+        public List<Seat> getSeats() {
+            return seats;
+        }
+
+        public User getUser() {
+            return user;
         }
     }
 }

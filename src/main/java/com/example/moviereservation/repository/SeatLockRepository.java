@@ -1,7 +1,5 @@
 package com.example.moviereservation.repository;
 
-import java.util.Optional;
-
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -46,12 +44,14 @@ public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
         WHERE sl.showtime.id = :showtimeId
         AND sl.seat.id = :seatId
         AND sl.sessionId = :sessionId
+        AND sl.guestEmail = :guestEmail
         AND sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
         AND sl.expiresAt > CURRENT_TIMESTAMP
     """)
     int markLockAsProcessingForSession(@Param("showtimeId") Long showtimeId,
                                     @Param("seatId") Long seatId,
-                                    @Param("sessionId") String sessionId);
+                                    @Param("sessionId") String sessionId,
+                                    @Param("guestEmail") String guestEmail);
 
     @Modifying
     @Query("""
@@ -63,13 +63,14 @@ public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
         AND (
             (:userId IS NOT NULL AND sl.user.id = :userId)
             OR
-            (:sessionId IS NOT NULL AND sl.sessionId = :sessionId)
+            (:sessionId IS NOT NULL AND sl.sessionId = :sessionId AND sl.guestEmail = :guestEmail)
         )
     """)
     int markLockAsConverted(@Param("showtimeId") Long showtimeId,
                             @Param("seatId") Long seatId,
                             @Param("userId") Long userId,
-                            @Param("sessionId") String sessionId);
+                            @Param("sessionId") String sessionId,
+                            @Param("guestEmail") String guestEmail);
 
     @Modifying
     @Query("""
@@ -86,19 +87,20 @@ public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
         SET sl.status = com.example.moviereservation.entity.LockStatus.EXPIRED
         WHERE sl.showtime.id = :showtimeId
         AND sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
-        AND sl.expiresAt < CURRENT_TIMESTAMP
+        AND sl.expiresAt > CURRENT_TIMESTAMP
         AND sl.seat.id = :seatId
         AND (
             (:userId IS NOT NULL AND sl.user.id = :userId)
             OR
-            (:sessionId IS NOT NULL AND sl.sessionId = :sessionId)
+            (:sessionId IS NOT NULL AND sl.sessionId = :sessionId AND sl.guestEmail = :guestEmail)
         )
     """)
-    int cancelByShowtimeIdAndSeatIdAndUserIdOrSessionId(
+    int cancelActiveLock(
             @Param("showtimeId") Long showtimeId,
             @Param("seatId") Long seatId,
             @Param("userId") Long userId,
-            @Param("sessionId") String sessionId
+            @Param("sessionId") String sessionId,
+            @Param("guestEmail") String guestEmail
     );
 
 }

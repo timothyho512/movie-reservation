@@ -17,7 +17,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
                 AND r.status IN (
                     com.example.moviereservation.entity.ReservationStatus.PENDING,
                     com.example.moviereservation.entity.ReservationStatus.CONFIRMED,
-                    com.example.moviereservation.entity.ReservationStatus.COMPLETED,
+                    com.example.moviereservation.entity.ReservationStatus.COMPLETED
                 )
             """)    
     boolean existsReservedSeatForShowtime(@Param("showtimeId") Long showtimeId, @Param("seatId") Long seatId);
