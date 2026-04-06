@@ -1,6 +1,8 @@
 package com.example.moviereservation.controller;
 
 import com.example.moviereservation.dto.ReservationRequest;
+import com.example.moviereservation.dto.CancelReservationRequest;
+import com.example.moviereservation.dto.CancelReservationResponse;
 import com.example.moviereservation.entity.Reservation;
 import com.example.moviereservation.repository.ReservationRepository;
 import com.example.moviereservation.service.ReservationService;
@@ -49,5 +51,15 @@ public class ReservationController {
     public ResponseEntity<Void> deleteReservation(@PathVariable Long id) {
         reservationService.deleteReservation(id);
         return ResponseEntity.noContent().build();
+    }
+
+    // Business logic
+    @PostMapping("/{id}/cancel")
+    public ResponseEntity<CancelReservationResponse> cancelReservation(
+            @PathVariable Long id,
+            @RequestBody CancelReservationRequest request
+    ) {
+        CancelReservationResponse response = reservationService.cancelReservation(id, request);
+        return ResponseEntity.ok(response);
     }
 }

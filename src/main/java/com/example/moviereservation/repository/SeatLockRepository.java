@@ -19,7 +19,6 @@ public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
                     (sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
                         AND sl.expiresAt > CURRENT_TIMESTAMP)
                     OR sl.status = com.example.moviereservation.entity.LockStatus.PROCESSING
-                    OR sl.status = com.example.moviereservation.entity.LockStatus.CONVERTED_TO_RESERVATION
                 )
             """)
     boolean existsLockedSeatForShowtime(@Param("showtimeId") Long showtimeId, @Param("seatId") Long seatId);
@@ -112,7 +111,6 @@ public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
             (sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
                 AND sl.expiresAt > CURRENT_TIMESTAMP)
             OR sl.status = com.example.moviereservation.entity.LockStatus.PROCESSING
-            OR sl.status = com.example.moviereservation.entity.LockStatus.CONVERTED_TO_RESERVATION
         )
     """)
     List<Long> findUnavailableLockedSeatIdsForShowtime(@Param("showtimeId") Long showtimeId);

@@ -1,6 +1,9 @@
 package com.example.moviereservation.service;
 
 import com.example.moviereservation.Exception.ResourceNotFoundException;
+import com.example.moviereservation.Exception.SeatUnavailableException;
+import com.example.moviereservation.dto.CancelReservationRequest;
+import com.example.moviereservation.dto.CancelReservationResponse;
 import com.example.moviereservation.dto.ReservationRequest;
 import com.example.moviereservation.entity.*;
 import com.example.moviereservation.repository.ReservationRepository;
@@ -9,6 +12,7 @@ import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -145,6 +149,71 @@ public class ReservationService {
         showtimeRepository.save(showtime);
 
         reservationRepository.delete(reservation);
+    }
+
+
+    // Business logic for canceling reservation
+    @Transactional
+    public CancelReservationResponse cancelReservation(Long reservationId, CancelReservationRequest request) {
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Reservation not found with id: " + reservationId));
+
+        validateCancellationIdentity(request);
+        validateReservationOwnership(reservation, request);
+        validateReservationCancelable(reservation);
+
+        reservation.setStatus(ReservationStatus.CANCELLED);
+        reservation.setCancelledAt(LocalDateTime.now());
+
+        Showtime showtime = reservation.getShowtime();
+        showtime.setAvailableSeats(showtime.getAvailableSeats() + reservation.getNumberOfSeats());
+        showtimeRepository.save(showtime);
+
+        reservationRepository.save(reservation);
+
+        return new CancelReservationResponse(
+                reservation.getId(),
+                reservation.getStatus(),
+                "Reservation cancelled successfully"
+        );
+    }
+
+    private void validateCancellationIdentity(CancelReservationRequest request) {
+        boolean hasUserId = request.getUserId() != null;
+        boolean hasGuestEmail = request.getGuestEmail() != null && !request.getGuestEmail().isBlank();
+
+        if (hasUserId == hasGuestEmail) {
+            throw new IllegalArgumentException("Exactly one of userId or guestEmail must be provided");
+        }
+    }
+
+    private void validateReservationOwnership(Reservation reservation, CancelReservationRequest request) {
+        if (request.getUserId() != null) {
+            if (reservation.getUser() == null || !reservation.getUser().getId().equals(request.getUserId())) {
+                throw new SeatUnavailableException("Reservation does not belong to this user");
+            }
+            return;
+        }
+
+        if (reservation.getGuestEmail() == null || !reservation.getGuestEmail().equals(request.getGuestEmail())) {
+            throw new SeatUnavailableException("Reservation does not belong to this guest");
+        }
+    }
+
+    private void validateReservationCancelable(Reservation reservation) {
+        if (reservation.getStatus() == ReservationStatus.CANCELLED) {
+            throw new SeatUnavailableException("Reservation is already cancelled");
+        }
+
+        if (reservation.getStatus() != ReservationStatus.PENDING
+                && reservation.getStatus() != ReservationStatus.CONFIRMED) {
+            throw new SeatUnavailableException("Reservation cannot be cancelled in its current state");
+        }
+
+        LocalDateTime cutoff = reservation.getShowtime().getStartTime().minusHours(2);
+        if (LocalDateTime.now().isAfter(cutoff)) {
+            throw new SeatUnavailableException("Reservation can no longer be cancelled");
+        }
     }
 
 

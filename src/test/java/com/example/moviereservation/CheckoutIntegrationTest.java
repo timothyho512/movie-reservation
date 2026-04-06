@@ -4,6 +4,7 @@ package com.example.moviereservation;
 import com.example.moviereservation.entity.LockStatus;
 import com.example.moviereservation.entity.Movie;
 import com.example.moviereservation.entity.Reservation;
+import com.example.moviereservation.entity.ReservationStatus;
 import com.example.moviereservation.entity.Screen;
 import com.example.moviereservation.entity.ScreenType;
 import com.example.moviereservation.entity.Seat;
@@ -38,6 +39,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -134,8 +136,8 @@ public class CheckoutIntegrationTest {
     void guestCanLockSeatsSuccessfully() throws Exception {
         JsonNode response = lockAsGuest("guest@example.com", seat1.getId(), seat2.getId());
         
-        assertThat(response.get("message").asText()).isEqualTo("Seats locked successfully");
-        assertThat(response.get("sessionId").asText()).isNotBlank();
+        assertThat(response.get("message").asString()).isEqualTo("Seats locked successfully");
+        assertThat(response.get("sessionId").asString()).isNotBlank();
         assertThat(response.get("lockedSeatIds")).hasSize(2);
 
         List<SeatLock> locks = seatLockRepository.findAll();
@@ -162,7 +164,7 @@ public class CheckoutIntegrationTest {
 
     @Test
     void guestConfirmFailsWithWrongEmail() throws Exception {
-        String sessionId = lockAsGuest("guest@example.com", seat1.getId()).get("sessionId").asText();
+        String sessionId = lockAsGuest("guest@example.com", seat1.getId()).get("sessionId").asString();
 
         mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -177,7 +179,7 @@ public class CheckoutIntegrationTest {
     @Test
     void guestConfirmSucceedsWithCorrectSessionAndEmail() throws Exception {
         String guestEmail = "guest@example.com";
-        String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asText();
+        String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
 
         mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -201,7 +203,7 @@ public class CheckoutIntegrationTest {
 
     @Test
     void guestCancelSucceedsAndSeatCanBeLockedAgain() throws Exception {
-        String sessionId = lockAsGuest("guest@example.com", seat1.getId()).get("sessionId").asText();
+        String sessionId = lockAsGuest("guest@example.com", seat1.getId()).get("sessionId").asString();
 
         mockMvc.perform(post("/checkout/cancel")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -215,12 +217,12 @@ public class CheckoutIntegrationTest {
                         && lock.getStatus() == LockStatus.EXPIRED);
 
         JsonNode relockResponse = lockAsGuest("another@example.com", seat1.getId());
-        assertThat(relockResponse.get("message").asText()).isEqualTo("Seats locked successfully");
+        assertThat(relockResponse.get("message").asString()).isEqualTo("Seats locked successfully");
     }
 
     @Test
     void cannotLockAlreadyReservedSeats() throws Exception {
-        String sessionId = lockAsGuest("guest@example.com", seat1.getId()).get("sessionId").asText();
+        String sessionId = lockAsGuest("guest@example.com", seat1.getId()).get("sessionId").asString();
 
         mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -290,7 +292,7 @@ public class CheckoutIntegrationTest {
                 .getContentAsString();
 
         JsonNode json = objectMapper.readTree(response);
-        return json.get("sessionId").asText();
+        return json.get("sessionId").asString();
     }
 
     private JsonNode lockAsGuest(String guestEmail, Long... seatIds) throws Exception {
@@ -362,4 +364,300 @@ public class CheckoutIntegrationTest {
     private record ConfirmUserRequest(Long showtimeId, List<Long> seatIds, Long userId) {}
     private record CancelGuestRequest(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId) {}
 
+    // ====== get availability tests ======
+    @Test
+        void availabilityReturnsAllSeatsForShowtimeScreen() throws Exception {
+        mockMvc.perform(get("/api/showtimes/{id}/available-seats", showtime.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.showtimeId").value(showtime.getId()))
+                .andExpect(jsonPath("$.seats.length()").value(3))
+                .andExpect(jsonPath("$.seats[0].seatId").value(seat1.getId()))
+                .andExpect(jsonPath("$.seats[1].seatId").value(seat2.getId()))
+                .andExpect(jsonPath("$.seats[2].seatId").value(seat3.getId()));
+        }
+
+        @Test
+        void availabilityReturnsSeatsAsAvailableWhenNoLocksOrReservationsExist() throws Exception {
+        mockMvc.perform(get("/api/showtimes/{id}/available-seats", showtime.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seats[0].available").value(true))
+                .andExpect(jsonPath("$.seats[1].available").value(true))
+                .andExpect(jsonPath("$.seats[2].available").value(true));
+        }
+
+        @Test
+        void availabilityReturnsLockedSeatAsUnavailable() throws Exception {
+        lockAsGuest("guest@example.com", seat1.getId());
+
+        mockMvc.perform(get("/api/showtimes/{id}/available-seats", showtime.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seats[0].seatId").value(seat1.getId()))
+                .andExpect(jsonPath("$.seats[0].available").value(false))
+                .andExpect(jsonPath("$.seats[1].available").value(true))
+                .andExpect(jsonPath("$.seats[2].available").value(true));
+        }
+
+        @Test
+        void availabilityReturnsReservedSeatAsUnavailable() throws Exception {
+        String guestEmail = "guest@example.com";
+        String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asText();
+
+        mockMvc.perform(post("/checkout/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/showtimes/{id}/available-seats", showtime.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seats[0].seatId").value(seat1.getId()))
+                .andExpect(jsonPath("$.seats[0].available").value(false));
+        }
+
+        @Test
+        void availabilityReturnsSeatAsAvailableAfterReservationCancellation() throws Exception {
+        String guestEmail = "guest@example.com";
+        String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asText();
+
+        String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+        mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "guestEmail": "guest@example.com"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/showtimes/{id}/available-seats", showtime.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seats[0].seatId").value(seat1.getId()))
+                .andExpect(jsonPath("$.seats[0].available").value(true));
+        }
+
+        @Test
+        void availabilityReturnsNotFoundWhenShowtimeDoesNotExist() throws Exception {
+        mockMvc.perform(get("/api/showtimes/{id}/available-seats", 999999))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Showtime not found with id: 999999"));
+        }
+        
+    // ======== Cancel reservation ========
+
+        @Test
+        void guestCanCancelOwnReservationSuccessfully() throws Exception {
+        String guestEmail = "guestcancel@example.com";
+        String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+        String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+        int availableSeatsBeforeCancel = showtimeRepository.findById(showtime.getId()).orElseThrow().getAvailableSeats();
+
+        mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "guestEmail": "guestcancel@example.com"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reservationId").value(reservationId))
+                .andExpect(jsonPath("$.status").value("CANCELLED"))
+                .andExpect(jsonPath("$.message").value("Reservation cancelled successfully"));
+
+        Reservation cancelled = reservationRepository.findById(reservationId).orElseThrow();
+        assertThat(cancelled.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(cancelled.getCancelledAt()).isNotNull();
+
+        Showtime updatedShowtime = showtimeRepository.findById(showtime.getId()).orElseThrow();
+        assertThat(updatedShowtime.getAvailableSeats()).isEqualTo(availableSeatsBeforeCancel + 1);
+        }
+
+        @Test
+        void registeredUserCanCancelOwnReservationSuccessfully() throws Exception {
+        lockAsUser(user.getId(), seat2.getId());
+
+        String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(confirmUserBody(showtime.getId(), List.of(seat2.getId()), user.getId())))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+        mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "userId": 1
+                                }
+                                """.replace("1", String.valueOf(user.getId()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reservationId").value(reservationId))
+                .andExpect(jsonPath("$.status").value("CANCELLED"));
+        }
+
+        @Test
+        void guestCancelFailsWithWrongEmail() throws Exception {
+        String guestEmail = "guestcancel@example.com";
+        String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+        String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+        mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "guestEmail": "wrong@example.com"
+                                }
+                                """))
+                .andExpect(status().isConflict());
+        }
+
+        @Test
+        void userCancelFailsWithWrongUserId() throws Exception {
+        lockAsUser(user.getId(), seat2.getId());
+
+        String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(confirmUserBody(showtime.getId(), List.of(seat2.getId()), user.getId())))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+        mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "userId": 999999
+                                }
+                                """))
+                .andExpect(status().isConflict());
+        }
+
+        @Test
+        void cancellingAlreadyCancelledReservationFails() throws Exception {
+        String guestEmail = "guestcancel@example.com";
+        String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+        String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+        mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "guestEmail": "guestcancel@example.com"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "guestEmail": "guestcancel@example.com"
+                                }
+                                """))
+                .andExpect(status().isConflict());
+        }
+
+        @Test
+        void cancellingRestoresSeatAvailability() throws Exception {
+        String guestEmail = "guestcancel@example.com";
+        String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+        String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+        mockMvc.perform(get("/api/showtimes/{id}/available-seats", showtime.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seats[0].seatId").value(seat1.getId()))
+                .andExpect(jsonPath("$.seats[0].available").value(false));
+
+        mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "guestEmail": "guestcancel@example.com"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/showtimes/{id}/available-seats", showtime.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seats[0].seatId").value(seat1.getId()))
+                .andExpect(jsonPath("$.seats[0].available").value(true));
+        }
+
+        @Test
+        void cancellingAfterCutoffFails() throws Exception {
+        showtime.setStartTime(LocalDateTime.now().plusMinutes(30));
+        showtimeRepository.save(showtime);
+
+        String guestEmail = "guestcancel@example.com";
+        String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+        String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+        mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "guestEmail": "guestcancel@example.com"
+                                }
+                                """))
+                .andExpect(status().isConflict());
+        }
 }
