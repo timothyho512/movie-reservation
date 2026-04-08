@@ -1,7 +1,6 @@
 package com.example.moviereservation.dto;
 
 public class CancelLockResponse {
-    private boolean success;
     private String message;
 
     public CancelLockResponse() {}

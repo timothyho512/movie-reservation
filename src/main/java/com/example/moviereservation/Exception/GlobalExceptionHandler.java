@@ -86,6 +86,31 @@ public class GlobalExceptionHandler {
         );
     }
 
+        @ExceptionHandler(DuplicateEmailException.class)
+        public ResponseEntity<ApiError> handleDuplicateEmail(
+                DuplicateEmailException ex,
+                HttpServletRequest request
+        ) {
+                return buildErrorResponse(
+                        HttpStatus.CONFLICT,
+                        ex.getMessage(),
+                        request.getRequestURI()
+                );
+        }
+
+        @ExceptionHandler(AuthenticationFailedException.class)
+        public ResponseEntity<ApiError> handleAuthenticationFailed(
+                AuthenticationFailedException ex,
+                HttpServletRequest request
+        ) {
+                return buildErrorResponse(
+                        HttpStatus.UNAUTHORIZED,
+                        ex.getMessage(),
+                        request.getRequestURI()
+                );
+        }
+
+
     private ResponseEntity<ApiError> buildErrorResponse(
             HttpStatus status,
             String message,

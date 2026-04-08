@@ -26,6 +26,8 @@ import com.example.moviereservation.dto.CheckoutConfirmResponse;
 import com.example.moviereservation.dto.CancelLockRequest;
 import com.example.moviereservation.dto.CancelLockResponse;
 
+import com.example.moviereservation.security.CustomUserPrincipal;
+
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -56,13 +58,14 @@ public class CheckoutService {
     // validation, loading showtime/seats/user, availability check, lock creation, reservation creation and save
     // all happen inside one service transaction
     @Transactional
-    public CheckoutLockResponse lockSeats(CheckoutLockRequest request) {
-        // Validate request (showtimeId, seatIds, userId/guestEmail)
-        validateCheckoutLockRequest(request);
+    public CheckoutLockResponse lockSeats(CheckoutLockRequest request, CustomUserPrincipal principal) {
+        Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
+        // Validate request (showtimeId, seatIds, guest/auth identity)
+        validateCheckoutLockRequest(request, effectiveUserId);
 
-        CheckoutContext context = prepareCheckoutContext(request.getShowtimeId(), request.getSeatIds(), request.getUserId());
+        CheckoutContext context = prepareCheckoutContext(request.getShowtimeId(), request.getSeatIds(), effectiveUserId);
 
-        String guestEmail = request.getGuestEmail();
+        String guestEmail = principal != null ? null : request.getGuestEmail();
 
         // Check if seats are available for the showtime
         validateSeatsAvailable(context.getShowtime(), context.getSeats());
@@ -80,14 +83,15 @@ public class CheckoutService {
     }
 
     @Transactional
-    public CheckoutConfirmResponse confirmCheckout(CheckoutConfirmRequest request) {
-        // Validate request (showtimeId, seatIds, userId/guestEmail, sessionId)
-        validateCheckoutConfirmRequest(request);
+    public CheckoutConfirmResponse confirmCheckout(CheckoutConfirmRequest request, CustomUserPrincipal principal) {
+        Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
+        // Validate request (showtimeId, seatIds, guest/auth identity, sessionId)
+        validateCheckoutConfirmRequest(request, effectiveUserId);
   
-        CheckoutContext context = prepareCheckoutContext(request.getShowtimeId(), request.getSeatIds(), request.getUserId());
+        CheckoutContext context = prepareCheckoutContext(request.getShowtimeId(), request.getSeatIds(), effectiveUserId);
 
-        String sessionId = request.getSessionId();
-        String guestEmail = request.getGuestEmail();
+        String sessionId = principal != null ? null : request.getSessionId();
+        String guestEmail = principal != null ? null : request.getGuestEmail();
 
         // change row status to "processing" to prevent other concurrent requests from using the same lock
         markLocksAsProcessing(context.getShowtime(), context.getSeats(), context.getUser(), sessionId, guestEmail);
@@ -107,19 +111,33 @@ public class CheckoutService {
     }
 
     @Transactional
-    public CancelLockResponse cancelLock(CancelLockRequest request) {
-        // Validate request (showtimeId, seatIds, userId/guestEmail, sessionId)
-        validateCancelLockRequest(request);
+    public CancelLockResponse cancelLock(CancelLockRequest request, CustomUserPrincipal principal) {
+        Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
+        // Validate request (showtimeId, seatIds, guest/auth identity, sessionId)
+        validateCancelLockRequest(request, effectiveUserId);
 
-        CheckoutContext context = prepareCheckoutContext(request.getShowtimeId(), request.getSeatIds(), request.getUserId());
+        CheckoutContext context = prepareCheckoutContext(request.getShowtimeId(), request.getSeatIds(), effectiveUserId);
 
-        String sessionId = request.getSessionId();
-        String guestEmail = request.getGuestEmail();
+        String sessionId = principal != null ? null : request.getSessionId();
+        String guestEmail = principal != null ? null : request.getGuestEmail();
 
         cancelLocks(context.getShowtime(), context.getSeats(), context.getUser(), sessionId, guestEmail);
 
         return buildCancelResponse("Locks cancelled successfully");
 
+    }
+
+    // For logged-in requests, the JWT principal is the only trusted user identity.
+    private Long resolveAuthenticatedUserId(CustomUserPrincipal principal, String guestEmail) {
+        if (principal == null) {
+            return null;
+        }
+
+        if (guestEmail != null && !guestEmail.isBlank()) {
+            throw new IllegalArgumentException("Guest email must not be provided for authenticated users");
+        }
+
+        return principal.getUserId();
     }
 
     private Showtime loadShowtime(Long showtimeId) {
@@ -161,7 +179,7 @@ public class CheckoutService {
         boolean hasGuestEmail = guestEmail != null && !guestEmail.isBlank();
 
         if (hasUserId == hasGuestEmail) {
-            throw new IllegalArgumentException("Exactly one of userId or guestEmail must be provided");
+            throw new IllegalArgumentException("Exactly one of authenticated user or guestEmail must be provided");
         }
 
         if (hasGuestEmail) {
@@ -188,21 +206,19 @@ public class CheckoutService {
     }
 
 
-    // Helper method to validate lock request
-    private void validateCheckoutLockRequest(CheckoutLockRequest request) throws IllegalArgumentException {
+    private void validateCheckoutLockRequest(CheckoutLockRequest request, Long effectiveUserId) throws IllegalArgumentException {
         validateCommonSeatRequest(request.getShowtimeId(), request.getSeatIds());
-        validateUserOrGuestIdentity(request.getUserId(), request.getGuestEmail());
-
+        validateUserOrGuestIdentity(effectiveUserId, request.getGuestEmail());
     }
 
-    private void validateCheckoutConfirmRequest(CheckoutConfirmRequest request) throws IllegalArgumentException {
+    private void validateCheckoutConfirmRequest(CheckoutConfirmRequest request, Long effectiveUserId) throws IllegalArgumentException {
         validateCommonSeatRequest(request.getShowtimeId(), request.getSeatIds());
-        validateSessionIdentity(request.getUserId(), request.getGuestEmail(), request.getSessionId());
+        validateSessionIdentity(effectiveUserId, request.getGuestEmail(), request.getSessionId());
     }
 
-    private void validateCancelLockRequest(CancelLockRequest request) throws IllegalArgumentException {
+    private void validateCancelLockRequest(CancelLockRequest request, Long effectiveUserId) throws IllegalArgumentException {
         validateCommonSeatRequest(request.getShowtimeId(), request.getSeatIds());
-        validateSessionIdentity(request.getUserId(), request.getGuestEmail(), request.getSessionId());
+        validateSessionIdentity(effectiveUserId, request.getGuestEmail(), request.getSessionId());
     }
 
 

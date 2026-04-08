@@ -12,6 +12,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import org.springframework.security.core.Authentication;
+import com.example.moviereservation.security.CustomUserPrincipal;
+
 import java.util.List;
 
 @RestController
@@ -57,9 +60,18 @@ public class ReservationController {
     @PostMapping("/{id}/cancel")
     public ResponseEntity<CancelReservationResponse> cancelReservation(
             @PathVariable Long id,
-            @RequestBody CancelReservationRequest request
+            @RequestBody CancelReservationRequest request,
+            Authentication authentication
     ) {
-        CancelReservationResponse response = reservationService.cancelReservation(id, request);
+        CancelReservationResponse response =
+                reservationService.cancelReservation(id, request, extractPrincipal(authentication));
         return ResponseEntity.ok(response);
+    }
+
+    private CustomUserPrincipal extractPrincipal(Authentication authentication) {
+        if (authentication == null || !(authentication.getPrincipal() instanceof CustomUserPrincipal principal)) {
+            return null;
+        }
+        return principal;
     }
 }

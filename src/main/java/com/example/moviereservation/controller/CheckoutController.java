@@ -14,6 +14,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.moviereservation.security.CustomUserPrincipal;
+import org.springframework.security.core.Authentication;
+
+
 @RestController
 @RequestMapping("/checkout")
 public class CheckoutController {
@@ -21,17 +25,33 @@ public class CheckoutController {
     private CheckoutService checkoutService;
     
     @PostMapping("lock")
-    public ResponseEntity<CheckoutLockResponse> lockSeats(@RequestBody CheckoutLockRequest request) {
-        return ResponseEntity.ok(checkoutService.lockSeats(request));
+    public ResponseEntity<CheckoutLockResponse> lockSeats(
+            @RequestBody CheckoutLockRequest request,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(checkoutService.lockSeats(request, extractPrincipal(authentication)));
     }
 
     @PostMapping("confirm")
-    public ResponseEntity<CheckoutConfirmResponse> confirmCheckout(@RequestBody CheckoutConfirmRequest request) {
-        return ResponseEntity.ok(checkoutService.confirmCheckout(request));
+    public ResponseEntity<CheckoutConfirmResponse> confirmCheckout(
+            @RequestBody CheckoutConfirmRequest request,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(checkoutService.confirmCheckout(request, extractPrincipal(authentication)));
     }
 
     @PostMapping("cancel")
-    public ResponseEntity<CancelLockResponse> cancelLock(@RequestBody CancelLockRequest request) {
-        return ResponseEntity.ok(checkoutService.cancelLock(request));
+    public ResponseEntity<CancelLockResponse> cancelLock(
+            @RequestBody CancelLockRequest request,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(checkoutService.cancelLock(request, extractPrincipal(authentication)));
+    }
+
+    private CustomUserPrincipal extractPrincipal(Authentication authentication) {
+        if (authentication == null || !(authentication.getPrincipal() instanceof CustomUserPrincipal principal)) {
+            return null;
+        }
+        return principal;
     }
 }

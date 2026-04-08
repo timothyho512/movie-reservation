@@ -14,6 +14,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.example.moviereservation.security.CustomUserPrincipal;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -154,12 +156,14 @@ public class ReservationService {
 
     // Business logic for canceling reservation
     @Transactional
-    public CancelReservationResponse cancelReservation(Long reservationId, CancelReservationRequest request) {
+    public CancelReservationResponse cancelReservation(Long reservationId, CancelReservationRequest request, CustomUserPrincipal principal) {
         Reservation reservation = reservationRepository.findById(reservationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Reservation not found with id: " + reservationId));
+        
+        Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
 
-        validateCancellationIdentity(request);
-        validateReservationOwnership(reservation, request);
+        validateCancellationIdentity(effectiveUserId, request);
+        validateReservationOwnership(reservation, effectiveUserId, request);
         validateReservationCancelable(reservation);
 
         reservation.setStatus(ReservationStatus.CANCELLED);
@@ -178,18 +182,30 @@ public class ReservationService {
         );
     }
 
-    private void validateCancellationIdentity(CancelReservationRequest request) {
-        boolean hasUserId = request.getUserId() != null;
+    private Long resolveAuthenticatedUserId(CustomUserPrincipal principal, String guestEmail) {
+        if (principal == null) {
+            return null;
+        }
+
+        if (guestEmail != null && !guestEmail.isBlank()) {
+            throw new IllegalArgumentException("Guest email must not be provided for authenticated users");
+        }
+        
+        return principal.getUserId();
+    }
+
+    private void validateCancellationIdentity(Long effectiveUserId, CancelReservationRequest request) {
+        boolean hasUserId = effectiveUserId != null;
         boolean hasGuestEmail = request.getGuestEmail() != null && !request.getGuestEmail().isBlank();
 
         if (hasUserId == hasGuestEmail) {
-            throw new IllegalArgumentException("Exactly one of userId or guestEmail must be provided");
+            throw new IllegalArgumentException("Exactly one of authenticated user or guestEmail must be provided");
         }
     }
 
-    private void validateReservationOwnership(Reservation reservation, CancelReservationRequest request) {
-        if (request.getUserId() != null) {
-            if (reservation.getUser() == null || !reservation.getUser().getId().equals(request.getUserId())) {
+    private void validateReservationOwnership(Reservation reservation, Long effectiveUserId, CancelReservationRequest request) {
+        if (effectiveUserId != null) {
+            if (reservation.getUser() == null || !reservation.getUser().getId().equals(effectiveUserId)) {
                 throw new SeatUnavailableException("Reservation does not belong to this user");
             }
             return;

@@ -31,6 +31,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -77,6 +78,9 @@ public class CheckoutIntegrationTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
 
     private Showtime showtime;
     private Seat seat1;
@@ -127,7 +131,7 @@ public class CheckoutIntegrationTest {
         seat2 = seatRepository.save(new Seat(screen, "A", 2, SeatType.REGULAR, new BigDecimal("12.50")));
         seat3 = seatRepository.save(new Seat(screen, "A", 3, SeatType.REGULAR, new BigDecimal("12.50")));
 
-        user = new User("Jay", "Doe", "Jay@example.com", "password", "07123456789");
+        user = new User("Jay", "Doe", "jay@example.com", passwordEncoder.encode("password"), "07123456789");
         user.setRole(UserRole.CUSTOMER);
         user = userRepository.save(user);
     }
@@ -237,53 +241,107 @@ public class CheckoutIntegrationTest {
                         .value("Seat " + seat1.getId() + " is already reserved for this showtime"));
     }
 
+        @Test
+        void authenticatedUserCanLockSeatsWithoutRequestUserId() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.message").value("Seats locked successfully"))
+                        .andExpect(jsonPath("$.lockedSeatIds[0]").value(seat1.getId()));
+
+                List<SeatLock> locks = seatLockRepository.findAll();
+                assertThat(locks).hasSize(1);
+                assertThat(locks.getFirst().getUser().getId()).isEqualTo(user.getId());
+                assertThat(locks.getFirst().getGuestEmail()).isNull();
+        }
+
+        @Test
+        void authenticatedUserCanConfirmWithoutRequestUserId() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat2.getId())))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/confirm")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat2.getId())))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.message").value("Reservation confirmed successfully"))
+                        .andExpect(jsonPath("$.seatIds[0]").value(seat2.getId()));
+
+                List<Reservation> reservations = reservationRepository.findAll();
+                assertThat(reservations).hasSize(1);
+                assertThat(reservations.getFirst().getUser().getId()).isEqualTo(user.getId());
+        }
+
     @Test
-    void registeredUserCanLockAndConfirmSuccessfully() throws Exception {
-        lockAsUser(user.getId(), seat2.getId());
+        void authenticatedUserCannotConfirmLockOwnedByAnotherUser() throws Exception {
+                User otherUser = new User("Jane", "Doe", "jane@example.com", passwordEncoder.encode("password"), "07999999999");
+                otherUser.setRole(UserRole.CUSTOMER);
+                otherUser = userRepository.save(otherUser);
 
-        mockMvc.perform(post("/checkout/confirm")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmUserBody(showtime.getId(), List.of(seat2.getId()), user.getId())))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("Reservation confirmed successfully"))
-                .andExpect(jsonPath("$.seatIds[0]").value(seat2.getId()));
+                String otherUserToken = loginAndGetToken("jane@example.com", "password");
+                String userToken = loginAndGetToken("jay@example.com", "password");
 
-        List<Reservation> reservations = reservationRepository.findAll();
-        assertThat(reservations).hasSize(1);
-        assertThat(reservations.getFirst().getUser().getId()).isEqualTo(user.getId());
-        assertThat(reservations.getFirst().getGuestEmail()).isNull();
-    }
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + otherUserToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat3.getId())))
+                        .andExpect(status().isOk());
 
-    @Test
-    void registeredUserConfirmFailsWhenLockBelongsToAnotherUser() throws Exception {
-        User otherUser = new User("Jane", "Doe", "jane@example.com", "password", "07999999999");
-        otherUser.setRole(UserRole.CUSTOMER);
-        otherUser = userRepository.save(otherUser);
-
-        lockAsUser(user.getId(), seat3.getId());
-
-        mockMvc.perform(post("/checkout/confirm")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmUserBody(showtime.getId(), List.of(seat3.getId()), otherUser.getId())))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.message")
-                        .value("No valid active lock found for seat " + seat3.getId() + " for this confirmation request"));
-
-        assertThat(reservationRepository.findAll()).isEmpty();
-    }
+                mockMvc.perform(post("/checkout/confirm")
+                                .header("Authorization", "Bearer " + userToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat3.getId())))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message")
+                                .value("No valid active lock found for seat " + seat3.getId() + " for this confirmation request"));
+                assertThat(reservationRepository.findAll()).isEmpty();
+        }
 
 
-
-    private String lockSeatAndGetSessionId(String guestEmail, Long seatId) throws Exception {
+    private String loginAndGetToken(String email, String password) throws Exception {
         String requestBody = """
-            {
-              "showtimeId": %d,
-              "seatIds": [%d],
-              "guestEmail": "%s"
-            }
-            """.formatted(showtime.getId(), seatId, guestEmail);
+                {
+                  "email": "%s",
+                  "password": "%s"
+                }
+                """.formatted(email, password);
 
-        String response = mockMvc.perform(post("/checkout/lock")
+        String response = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isOk())
@@ -291,8 +349,7 @@ public class CheckoutIntegrationTest {
                 .getResponse()
                 .getContentAsString();
 
-        JsonNode json = objectMapper.readTree(response);
-        return json.get("sessionId").asString();
+        return objectMapper.readTree(response).get("token").asString();
     }
 
     private JsonNode lockAsGuest(String guestEmail, Long... seatIds) throws Exception {
@@ -308,38 +365,14 @@ public class CheckoutIntegrationTest {
         return objectMapper.readTree(response);
     }
 
-    private JsonNode lockAsUser(Long userId, Long... seatIds) throws Exception {
-        String response = mockMvc.perform(post("/checkout/lock")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(lockUserBody(showtime.getId(), List.of(seatIds), userId)))
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        return objectMapper.readTree(response);
-    }
-
     private String lockGuestBody(Long showtimeId, List<Long> seatIds, String guestEmail) throws Exception {
         // Only creates the JSON request body string for guest lock
         return objectMapper.writeValueAsString(new LockGuestRequest(showtimeId, seatIds, guestEmail));
     }
 
-    private String lockUserBody(Long showtimeId, List<Long> seatIds, Long userId) throws Exception {
-        return objectMapper.writeValueAsString(
-                new LockUserRequest(showtimeId, seatIds, userId)
-        );
-    }
-
     private String confirmGuestBody(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId) throws Exception {
         return objectMapper.writeValueAsString(
                 new ConfirmGuestRequest(showtimeId, seatIds, guestEmail, sessionId)
-        );
-    }
-
-    private String confirmUserBody(Long showtimeId, List<Long> seatIds, Long userId) throws Exception {
-        return objectMapper.writeValueAsString(
-                new ConfirmUserRequest(showtimeId, seatIds, userId)
         );
     }
 
@@ -359,9 +392,7 @@ public class CheckoutIntegrationTest {
         }
      */
     private record LockGuestRequest(Long showtimeId, List<Long> seatIds, String guestEmail) {}
-    private record LockUserRequest(Long showtimeId, List<Long> seatIds, Long userId) {}
     private record ConfirmGuestRequest(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId) {}
-    private record ConfirmUserRequest(Long showtimeId, List<Long> seatIds, Long userId) {}
     private record CancelGuestRequest(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId) {}
 
     // ====== get availability tests ======
@@ -490,29 +521,42 @@ public class CheckoutIntegrationTest {
         }
 
         @Test
-        void registeredUserCanCancelOwnReservationSuccessfully() throws Exception {
-        lockAsUser(user.getId(), seat2.getId());
+        void authenticatedUserCanCancelReservationWithoutRequestUserId() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
 
-        String confirmResponse = mockMvc.perform(post("/checkout/confirm")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmUserBody(showtime.getId(), List.of(seat2.getId()), user.getId())))
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk());
 
-        Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+                String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
 
-        mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                "userId": 1
-                                }
-                                """.replace("1", String.valueOf(user.getId()))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reservationId").value(reservationId))
-                .andExpect(jsonPath("$.status").value("CANCELLED"));
+                Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+                mockMvc.perform(post("/api/reservations/" + reservationId + "/cancel")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.message").value("Reservation cancelled successfully"));
         }
 
         @Test
@@ -541,28 +585,49 @@ public class CheckoutIntegrationTest {
         }
 
         @Test
-        void userCancelFailsWithWrongUserId() throws Exception {
-        lockAsUser(user.getId(), seat2.getId());
+        void authenticatedUserCannotCancelAnotherUsersReservation() throws Exception {
+                User otherUser = new User("Jane", "Doe", "jane@example.com", passwordEncoder.encode("password"), "07999999999");
+                otherUser.setRole(UserRole.CUSTOMER);
+                otherUser = userRepository.save(otherUser);
 
-        String confirmResponse = mockMvc.perform(post("/checkout/confirm")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmUserBody(showtime.getId(), List.of(seat2.getId()), user.getId())))
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
+                String otherUserToken = loginAndGetToken("jane@example.com", "password");
+                String userToken = loginAndGetToken("jay@example.com", "password");
 
-        Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + otherUserToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat2.getId())))
+                        .andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                "userId": 999999
-                                }
-                                """))
-                .andExpect(status().isConflict());
+                String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                                .header("Authorization", "Bearer " + otherUserToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat2.getId())))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+                mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
+                                .header("Authorization", "Bearer " + userToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message").value("Reservation does not belong to this user"));
         }
+
 
         @Test
         void cancellingAlreadyCancelledReservationFails() throws Exception {
@@ -659,5 +724,81 @@ public class CheckoutIntegrationTest {
                                 }
                                 """))
                 .andExpect(status().isConflict());
+        }
+
+        // New test for ownership refactor (Jwt token)
+
+
+
+        @Test
+        void authenticatedUserCannotProvideGuestEmail() throws Exception {
+        String token = loginAndGetToken("jay@example.com", "password");
+
+        mockMvc.perform(post("/checkout/lock")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "showtimeId": %d,
+                                "seatIds": [%d],
+                                "guestEmail": "guest@example.com"
+                                }
+                                """.formatted(showtime.getId(), seat3.getId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Guest email must not be provided for authenticated users"));
+        }
+
+
+        @Test
+        void authenticatedUserCanCancelLockWithoutRequestUserId() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat3.getId())))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/cancel")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat3.getId())))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.message").value("Locks cancelled successfully"));
+
+                List<SeatLock> locks = seatLockRepository.findAll();
+                assertThat(locks)
+                        .anyMatch(lock -> lock.getSeat().getId().equals(seat3.getId())
+                                && lock.getUser() != null
+                                && lock.getUser().getId().equals(user.getId())
+                                && lock.getStatus() == LockStatus.EXPIRED);
+        }
+
+        @Test
+        void authenticatedUserCannotProvideGuestFieldsOnConfirm() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/confirm")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "guest@example.com",
+                                        "sessionId": "abc"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isBadRequest());
         }
 }
