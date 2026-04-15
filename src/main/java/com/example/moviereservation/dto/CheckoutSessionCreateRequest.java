@@ -2,26 +2,23 @@ package com.example.moviereservation.dto;
 
 import java.util.List;
 
-public class CheckoutConfirmRequest {
+public class CheckoutSessionCreateRequest {
+
     private Long showtimeId;
     private List<Long> seatIds;
-    private String guestEmail;  // Optional, can be null for registered users
+    private String guestEmail;
     private String sessionId;
-    private String paymentMethodToken;
 
-    // Constructors
-    public CheckoutConfirmRequest() {}
+    public CheckoutSessionCreateRequest() {
+    }
 
-    public CheckoutConfirmRequest(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId, String paymentMethodToken) {
+    public CheckoutSessionCreateRequest(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId) {
         this.showtimeId = showtimeId;
         this.seatIds = seatIds;
         this.guestEmail = guestEmail;
         this.sessionId = sessionId;
-        this.paymentMethodToken = paymentMethodToken;
-
     }
 
-    // Getters and Setters
     public Long getShowtimeId() {
         return showtimeId;
     }
@@ -29,6 +26,7 @@ public class CheckoutConfirmRequest {
     public void setShowtimeId(Long showtimeId) {
         this.showtimeId = showtimeId;
     }
+
     public List<Long> getSeatIds() {
         return seatIds;
     }
@@ -51,13 +49,5 @@ public class CheckoutConfirmRequest {
 
     public void setSessionId(String sessionId) {
         this.sessionId = sessionId;
-    }
-
-    public String getPaymentMethodToken() {
-        return paymentMethodToken;
-    }
-
-    public void setPaymentMethodToken(String paymentMethodToken) {
-        this.paymentMethodToken = paymentMethodToken;
     }
 }

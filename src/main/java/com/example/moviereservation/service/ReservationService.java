@@ -83,8 +83,8 @@ public class ReservationService {
         reservation.setBookingReference(bookingReference);
         reservation.setNumberOfSeats(seats.size());
         reservation.setTotalPrice(totalPrice);
-        reservation.setStatus(request.getStatus() != null ? request.getStatus() : ReservationStatus.PENDING);
-        reservation.setPaymentStatus(request.getPaymentStatus() != null ? request.getPaymentStatus() : PaymentStatus.PENDING);
+        reservation.setStatus(request.getStatus() != null ? request.getStatus() : ReservationStatus.CONFIRMED);
+        reservation.setPaymentStatus(request.getPaymentStatus() != null ? request.getPaymentStatus() : PaymentStatus.PAID);
         reservation.setBookingTime(LocalDateTime.now());
 
         // Update showtime available seats
@@ -115,8 +115,8 @@ public class ReservationService {
         reservation.setBookingReference(bookingReference);
         reservation.setNumberOfSeats(seats.size());
         reservation.setTotalPrice(totalPrice);
-        reservation.setStatus(ReservationStatus.PENDING);
-        reservation.setPaymentStatus(PaymentStatus.PENDING);
+        reservation.setStatus(ReservationStatus.CONFIRMED);
+        reservation.setPaymentStatus(PaymentStatus.PAID);
         reservation.setBookingTime(LocalDateTime.now());
 
         // Update showtime available seats
@@ -125,6 +125,34 @@ public class ReservationService {
 
         return reservationRepository.save(reservation);
     }
+
+    public Reservation createPaidReservation(User user, String guestEmail, Showtime showtime, List<Seat> seats) {
+        validateReservationIdentity(user, guestEmail);
+
+        BigDecimal totalPrice = seats.stream()
+                .map(Seat::getBasePrice)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        String bookingReference = "BK" + System.currentTimeMillis();
+
+        Reservation reservation = new Reservation();
+        reservation.setUser(user);
+        reservation.setGuestEmail(guestEmail);
+        reservation.setShowtime(showtime);
+        reservation.setSeats(seats);
+        reservation.setBookingReference(bookingReference);
+        reservation.setNumberOfSeats(seats.size());
+        reservation.setTotalPrice(totalPrice);
+        reservation.setStatus(ReservationStatus.CONFIRMED);
+        reservation.setPaymentStatus(PaymentStatus.PAID);
+        reservation.setBookingTime(LocalDateTime.now());
+
+        showtime.setAvailableSeats(showtime.getAvailableSeats() - seats.size());
+        showtimeRepository.save(showtime);
+
+        return reservationRepository.save(reservation);
+    }
+
 
     public Reservation updateReservation(Long id, ReservationRequest request) {
         Reservation reservation = getReservationById(id);
@@ -190,7 +218,7 @@ public class ReservationService {
         if (guestEmail != null && !guestEmail.isBlank()) {
             throw new IllegalArgumentException("Guest email must not be provided for authenticated users");
         }
-        
+
         return principal.getUserId();
     }
 

@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.example.moviereservation.entity.SeatLock;
+
+import java.util.Collection;
 import java.util.List;
 
 public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
@@ -52,6 +54,60 @@ public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
                                     @Param("seatId") Long seatId,
                                     @Param("sessionId") String sessionId,
                                     @Param("guestEmail") String guestEmail);
+    
+    @Modifying
+    @Query("""
+        UPDATE SeatLock sl
+        SET sl.status = com.example.moviereservation.entity.LockStatus.CONVERTED_TO_RESERVATION
+        WHERE sl.showtime.id = :showtimeId
+        AND sl.seat.id = :seatId
+        AND sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
+        AND sl.expiresAt > CURRENT_TIMESTAMP
+        AND (
+            (:userId IS NOT NULL AND sl.user.id = :userId)
+            OR
+            (:sessionId IS NOT NULL AND sl.sessionId = :sessionId AND sl.guestEmail = :guestEmail)
+        )
+    """)
+    int markActiveLockAsConverted(
+            @Param("showtimeId") Long showtimeId,
+            @Param("seatId") Long seatId,
+            @Param("userId") Long userId,
+            @Param("sessionId") String sessionId,
+            @Param("guestEmail") String guestEmail
+    );
+    
+    @Query("""
+        SELECT sl
+        FROM SeatLock sl
+        WHERE sl.showtime.id = :showtimeId
+        AND sl.seat.id IN :seatIds
+        AND sl.user.id = :userId
+        AND sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
+        AND sl.expiresAt > CURRENT_TIMESTAMP
+    """)
+    List<SeatLock> findActiveLocksForUser(
+            @Param("showtimeId") Long showtimeId,
+            @Param("seatIds") Collection<Long> seatIds,
+            @Param("userId") Long userId
+    );
+
+    @Query("""
+        SELECT sl
+        FROM SeatLock sl
+        WHERE sl.showtime.id = :showtimeId
+        AND sl.seat.id IN :seatIds
+        AND sl.sessionId = :sessionId
+        AND sl.guestEmail = :guestEmail
+        AND sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
+        AND sl.expiresAt > CURRENT_TIMESTAMP
+    """)
+    List<SeatLock> findActiveLocksForGuest(
+            @Param("showtimeId") Long showtimeId,
+            @Param("seatIds") Collection<Long> seatIds,
+            @Param("sessionId") String sessionId,
+            @Param("guestEmail") String guestEmail
+    );
 
     @Modifying
     @Query("""

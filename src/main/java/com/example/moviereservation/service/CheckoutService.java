@@ -16,6 +16,7 @@ import com.example.moviereservation.entity.Reservation;
 import com.example.moviereservation.repository.UserRepository;
 import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
+import com.example.moviereservation.repository.CheckoutSessionRepository;
 import com.example.moviereservation.repository.ReservationRepository;
 import com.example.moviereservation.repository.SeatLockRepository;
 import com.example.moviereservation.Exception.ResourceNotFoundException;
@@ -36,23 +37,30 @@ import java.util.UUID;
 @Service
 public class CheckoutService {
 
-    @Autowired
-    private ShowtimeRepository showtimeRepository;
+    private final ShowtimeRepository showtimeRepository;
 
-    @Autowired
-    private SeatRepository seatRepository;
+    private final SeatRepository seatRepository;
 
-    @Autowired
-    private ReservationRepository reservationRepository;
+    private final ReservationRepository reservationRepository;
 
-    @Autowired
-    private SeatLockRepository seatLockRepository;
+    private final SeatLockRepository seatLockRepository;
 
-    @Autowired
-    private UserRepository userRepository;
+    private final UserRepository userRepository;
 
-    @Autowired
-    private ReservationService reservationService;
+    private final ReservationService reservationService;
+
+    private final CheckoutSessionRepository checkoutSessionRepository;
+
+
+    public CheckoutService(ShowtimeRepository showtimeRepository, SeatRepository seatRepository, ReservationRepository reservationRepository, SeatLockRepository seatLockRepository, UserRepository userRepository, ReservationService reservationService, StripeCheckoutService stripeCheckoutService, CheckoutSessionRepository checkoutSessionRepository) {
+        this.showtimeRepository = showtimeRepository;
+        this.seatRepository = seatRepository;
+        this.reservationRepository = reservationRepository;
+        this.seatLockRepository = seatLockRepository;
+        this.userRepository = userRepository;
+        this.reservationService = reservationService;
+        this.checkoutSessionRepository = checkoutSessionRepository;
+    }
 
     // the whole thing needs to be transactional
     // validation, loading showtime/seats/user, availability check, lock creation, reservation creation and save
@@ -83,6 +91,8 @@ public class CheckoutService {
     }
 
     @Transactional
+    // Legacy fake-payment confirmation flow. Do not use this as the production payment path.
+    // Stripe-backed checkout finalizes reservations from CheckoutSessionService webhook handling.
     public CheckoutConfirmResponse confirmCheckout(CheckoutConfirmRequest request, CustomUserPrincipal principal) {
         Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
         // Validate request (showtimeId, seatIds, guest/auth identity, sessionId)
@@ -98,6 +108,7 @@ public class CheckoutService {
 
         // If valid, create a reservation in the database
         try {
+            processPayment(request.getPaymentMethodToken());
             Reservation reservation = createReservation(context.getUser(), guestEmail, context.getShowtime(), context.getSeats());
 
             // Update the lock status to "converted to reservation"
@@ -122,6 +133,7 @@ public class CheckoutService {
         String guestEmail = principal != null ? null : request.getGuestEmail();
 
         cancelLocks(context.getShowtime(), context.getSeats(), context.getUser(), sessionId, guestEmail);
+        cancelPendingCheckoutSessions(context.getShowtime(), context.getUser(), sessionId, guestEmail);
 
         return buildCancelResponse("Locks cancelled successfully");
 
@@ -214,6 +226,7 @@ public class CheckoutService {
     private void validateCheckoutConfirmRequest(CheckoutConfirmRequest request, Long effectiveUserId) throws IllegalArgumentException {
         validateCommonSeatRequest(request.getShowtimeId(), request.getSeatIds());
         validateSessionIdentity(effectiveUserId, request.getGuestEmail(), request.getSessionId());
+        validatePaymentMethodToken(request.getPaymentMethodToken());
     }
 
     private void validateCancelLockRequest(CancelLockRequest request, Long effectiveUserId) throws IllegalArgumentException {
@@ -368,6 +381,7 @@ public class CheckoutService {
         return new CheckoutConfirmResponse(reservation.getId(),
                                             reservation.getBookingReference(),
                                             reservation.getStatus(),
+                                            reservation.getPaymentStatus(),
                                             reservation.getTotalPrice(),
                                             reservation.getSeats().stream().map(Seat::getId).toList(),
                                             "Reservation confirmed successfully");
@@ -376,6 +390,16 @@ public class CheckoutService {
     private CancelLockResponse buildCancelResponse(String message) {
         return new CancelLockResponse(message);
     }
+
+    private void cancelPendingCheckoutSessions(Showtime showtime, User user, String sessionId, String guestEmail) {
+        if (user != null) {
+            checkoutSessionRepository.cancelPendingSessionsForUser(showtime.getId(), user.getId());
+            return;
+        }
+
+        checkoutSessionRepository.cancelPendingSessionsForGuest(showtime.getId(), sessionId, guestEmail);
+    }
+
 
     // ===== CheckoutContext =====
 
@@ -412,4 +436,26 @@ public class CheckoutService {
             return user;
         }
     }
+
+    // ======= helper function for payment =======
+    private void validatePaymentMethodToken(String paymentMethodToken) {
+        if (paymentMethodToken == null || paymentMethodToken.isBlank()) {
+            throw new IllegalArgumentException("Payment method token is required");
+        }
+
+        if (!paymentMethodToken.equals("pm_success") && !paymentMethodToken.equals("pm_fail")) {
+            throw new IllegalArgumentException("Unsupported payment method token");
+        }
+    }
+
+    private boolean isPaymentSuccessful(String paymentMethodToken) {
+        return "pm_success".equals(paymentMethodToken);
+    }
+
+    private void processPayment(String paymentMethodToken) {
+        if (!isPaymentSuccessful(paymentMethodToken)) {
+            throw new SeatUnavailableException("Payment failed");
+        }
+    }
+
 }

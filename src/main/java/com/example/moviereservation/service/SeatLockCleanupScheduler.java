@@ -15,10 +15,15 @@ public class SeatLockCleanupScheduler {
 
     @Scheduled(fixedRate = 60000) // Run every 60 seconds
     public void expireOldLocks() {
-        int expiredCount = seatLockCleanupService.expireTimedOutLocks();
+        int expiredLockCount = seatLockCleanupService.expireTimedOutLocks();
+        int expiredCheckoutSessionCount = seatLockCleanupService.expireStalePendingCheckoutSessions();
 
-        if (expiredCount > 0) {
-            System.out.println("Expired " + expiredCount + " seat locks");
+        if (expiredLockCount > 0) {
+            System.out.println("Expired " + expiredLockCount + " seat locks");
+        }
+
+        if (expiredCheckoutSessionCount > 0) {
+            System.out.println("Expired " + expiredCheckoutSessionCount + " checkout sessions");
         }
     }
 }

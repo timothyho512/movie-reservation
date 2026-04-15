@@ -14,6 +14,14 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.moviereservation.dto.CheckoutSessionCreateRequest;
+import com.example.moviereservation.dto.CheckoutSessionCreateResponse;
+import com.example.moviereservation.service.CheckoutSessionService;
+
+import com.example.moviereservation.dto.CheckoutSessionStatusResponse;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+
 import com.example.moviereservation.security.CustomUserPrincipal;
 import org.springframework.security.core.Authentication;
 
@@ -23,6 +31,9 @@ import org.springframework.security.core.Authentication;
 public class CheckoutController {
     @Autowired
     private CheckoutService checkoutService;
+
+    @Autowired
+    private CheckoutSessionService checkoutSessionService;
     
     @PostMapping("lock")
     public ResponseEntity<CheckoutLockResponse> lockSeats(
@@ -33,6 +44,8 @@ public class CheckoutController {
     }
 
     @PostMapping("confirm")
+    // Legacy fake-payment path kept temporarily for development/tests.
+    // Real payment flow should use POST /checkout/session and Stripe webhook finalization.
     public ResponseEntity<CheckoutConfirmResponse> confirmCheckout(
             @RequestBody CheckoutConfirmRequest request,
             Authentication authentication
@@ -53,5 +66,27 @@ public class CheckoutController {
             return null;
         }
         return principal;
+    }
+
+    @PostMapping("session")
+    // Canonical real-payment entry point: creates a Stripe Checkout Session for active locks.
+    public ResponseEntity<CheckoutSessionCreateResponse> createCheckoutSession(
+            @RequestBody CheckoutSessionCreateRequest request,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(checkoutSessionService.createCheckoutSession(request, extractPrincipal(authentication)));
+    }
+
+    @GetMapping("session/{checkoutReference}")
+    public ResponseEntity<CheckoutSessionStatusResponse> getCheckoutSessionStatus(
+            @PathVariable String checkoutReference,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(
+                checkoutSessionService.getCheckoutSessionStatus(
+                        checkoutReference,
+                        extractPrincipal(authentication)
+                )
+        );
     }
 }

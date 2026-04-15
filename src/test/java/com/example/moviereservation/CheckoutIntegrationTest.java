@@ -3,6 +3,7 @@ package com.example.moviereservation;
 
 import com.example.moviereservation.entity.LockStatus;
 import com.example.moviereservation.entity.Movie;
+import com.example.moviereservation.entity.PaymentStatus;
 import com.example.moviereservation.entity.Reservation;
 import com.example.moviereservation.entity.ReservationStatus;
 import com.example.moviereservation.entity.Screen;
@@ -23,6 +24,7 @@ import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.repository.TheatreRepository;
 import com.example.moviereservation.repository.UserRepository;
+import com.example.moviereservation.service.SeatLockCleanupService;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.JsonNode;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,6 +37,20 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.example.moviereservation.entity.CheckoutSession;
+import com.example.moviereservation.entity.CheckoutSessionStatus;
+import com.example.moviereservation.repository.CheckoutSessionRepository;
+
+import com.example.moviereservation.dto.StripeCheckoutSessionResult;
+import com.example.moviereservation.dto.StripeCheckoutExpiredEvent;
+import com.example.moviereservation.service.StripeCheckoutService;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
+import com.example.moviereservation.dto.StripeCheckoutCompletedEvent;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -43,6 +59,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+import static org.hamcrest.Matchers.startsWith;
 
 
 @SpringBootTest
@@ -82,6 +100,17 @@ public class CheckoutIntegrationTest {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Autowired
+    private CheckoutSessionRepository checkoutSessionRepository;
+
+    @Autowired
+    private SeatLockCleanupService seatLockCleanupService;
+
+
+    @MockitoBean
+    private StripeCheckoutService stripeCheckoutService; // Mock the StripeCheckoutService to avoid real API calls during tests
+    
+
     private Showtime showtime;
     private Seat seat1;
     private Seat seat2;
@@ -90,6 +119,7 @@ public class CheckoutIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        checkoutSessionRepository.deleteAll();
         reservationRepository.deleteAll();
         seatLockRepository.deleteAll();
         seatRepository.deleteAll();
@@ -134,6 +164,17 @@ public class CheckoutIntegrationTest {
         user = new User("Jay", "Doe", "jay@example.com", passwordEncoder.encode("password"), "07123456789");
         user.setRole(UserRole.CUSTOMER);
         user = userRepository.save(user);
+
+        // Mock the StripeCheckoutService to return a predictable result for any checkout session creation
+        when(stripeCheckoutService.createHostedCheckoutSession(any()))
+        .thenAnswer(invocation -> {
+            CheckoutSession checkoutSession = invocation.getArgument(0);
+            return new StripeCheckoutSessionResult(
+                    "cs_test_" + checkoutSession.getCheckoutReference(),
+                    "https://checkout.stripe.test/" + checkoutSession.getCheckoutReference(),
+                    "pi_test_" + checkoutSession.getCheckoutReference()
+            );
+        });
     }
 
     @Test
@@ -158,7 +199,7 @@ public class CheckoutIntegrationTest {
 
         mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com", "wrong-session")))
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com", "wrong-session", "pm_success")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message")
                         .value("No valid active lock found for seat " + seat1.getId() + " for this confirmation request"));
@@ -172,7 +213,7 @@ public class CheckoutIntegrationTest {
 
         mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), "wrong@example.com", sessionId)))
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), "wrong@example.com", sessionId, "pm_success")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message")
                         .value("No valid active lock found for seat " + seat1.getId() + " for this confirmation request"));
@@ -187,16 +228,20 @@ public class CheckoutIntegrationTest {
 
         mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId, "pm_success")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("Reservation confirmed successfully"))
                 .andExpect(jsonPath("$.reservationId").isNumber())
                 .andExpect(jsonPath("$.bookingReference").isString())
+                .andExpect(jsonPath("$.status").value("CONFIRMED"))
+                .andExpect(jsonPath("$.paymentStatus").value("PAID"))
                 .andExpect(jsonPath("$.seatIds[0]").value(seat1.getId()));
 
         List<Reservation> reservations = reservationRepository.findAll();
         assertThat(reservations).hasSize(1);
         assertThat(reservations.getFirst().getGuestEmail()).isEqualTo(guestEmail);
+        assertThat(reservations.getFirst().getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+        assertThat(reservations.getFirst().getPaymentStatus()).isEqualTo(PaymentStatus.PAID);
 
         List<SeatLock> locks = seatLockRepository.findAll();
         assertThat(locks)
@@ -204,6 +249,49 @@ public class CheckoutIntegrationTest {
                         && lock.getGuestEmail().equals(guestEmail)
                         && lock.getStatus() == LockStatus.CONVERTED_TO_RESERVATION);
     }
+
+    @Test
+        void guestConfirmFailsWhenPaymentFails() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                mockMvc.perform(post("/checkout/confirm")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId, "pm_fail")))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message").value("Payment failed"));
+
+                assertThat(reservationRepository.findAll()).isEmpty();
+
+                List<SeatLock> locks = seatLockRepository.findAll();
+                assertThat(locks)
+                        .anyMatch(lock -> lock.getSeat().getId().equals(seat1.getId())
+                                && lock.getGuestEmail().equals(guestEmail)
+                                && lock.getStatus() == LockStatus.LOCKED);
+        }
+
+        @Test
+        void guestConfirmFailsWhenPaymentTokenMissing() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                mockMvc.perform(post("/checkout/confirm")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.message").value("Payment method token is required"));
+
+                assertThat(reservationRepository.findAll()).isEmpty();
+        }
+
+
 
     @Test
     void guestCancelSucceedsAndSeatCanBeLockedAgain() throws Exception {
@@ -230,7 +318,7 @@ public class CheckoutIntegrationTest {
 
         mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com", sessionId)))
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com", sessionId, "pm_success")))
                 .andExpect(status().isOk());
 
         mockMvc.perform(post("/checkout/lock")
@@ -285,7 +373,8 @@ public class CheckoutIntegrationTest {
                                 .content("""
                                         {
                                         "showtimeId": %d,
-                                        "seatIds": [%d]
+                                        "seatIds": [%d],
+                                        "paymentMethodToken": "pm_success"
                                         }
                                         """.formatted(showtime.getId(), seat2.getId())))
                         .andExpect(status().isOk())
@@ -323,7 +412,8 @@ public class CheckoutIntegrationTest {
                                 .content("""
                                         {
                                         "showtimeId": %d,
-                                        "seatIds": [%d]
+                                        "seatIds": [%d],
+                                        "paymentMethodToken": "pm_success"
                                         }
                                         """.formatted(showtime.getId(), seat3.getId())))
                         .andExpect(status().isConflict())
@@ -331,6 +421,45 @@ public class CheckoutIntegrationTest {
                                 .value("No valid active lock found for seat " + seat3.getId() + " for this confirmation request"));
                 assertThat(reservationRepository.findAll()).isEmpty();
         }
+
+        @Test
+        void authenticatedConfirmFailsWhenPaymentFails() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/confirm")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "paymentMethodToken": "pm_fail"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message").value("Payment failed"));
+
+                assertThat(reservationRepository.findAll()).isEmpty();
+
+                List<SeatLock> locks = seatLockRepository.findAll();
+                assertThat(locks)
+                        .anyMatch(lock -> lock.getSeat().getId().equals(seat1.getId())
+                                && lock.getUser() != null
+                                && lock.getUser().getId().equals(user.getId())
+                                && lock.getStatus() == LockStatus.LOCKED);
+        }
+
 
 
     private String loginAndGetToken(String email, String password) throws Exception {
@@ -370,9 +499,9 @@ public class CheckoutIntegrationTest {
         return objectMapper.writeValueAsString(new LockGuestRequest(showtimeId, seatIds, guestEmail));
     }
 
-    private String confirmGuestBody(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId) throws Exception {
+    private String confirmGuestBody(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId, String paymentMethodToken) throws Exception {
         return objectMapper.writeValueAsString(
-                new ConfirmGuestRequest(showtimeId, seatIds, guestEmail, sessionId)
+                new ConfirmGuestRequest(showtimeId, seatIds, guestEmail, sessionId, paymentMethodToken)
         );
     }
 
@@ -392,7 +521,7 @@ public class CheckoutIntegrationTest {
         }
      */
     private record LockGuestRequest(Long showtimeId, List<Long> seatIds, String guestEmail) {}
-    private record ConfirmGuestRequest(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId) {}
+    private record ConfirmGuestRequest(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId, String paymentMethodToken) {}
     private record CancelGuestRequest(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId) {}
 
     // ====== get availability tests ======
@@ -435,7 +564,7 @@ public class CheckoutIntegrationTest {
 
         mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId, "pm_success")))
                 .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/showtimes/{id}/available-seats", showtime.getId()))
@@ -451,7 +580,7 @@ public class CheckoutIntegrationTest {
 
         String confirmResponse = mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId, "pm_success")))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
@@ -490,7 +619,7 @@ public class CheckoutIntegrationTest {
 
         String confirmResponse = mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId, "pm_success")))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
@@ -541,7 +670,8 @@ public class CheckoutIntegrationTest {
                                 .content("""
                                         {
                                         "showtimeId": %d,
-                                        "seatIds": [%d]
+                                        "seatIds": [%d],
+                                        "paymentMethodToken": "pm_success"
                                         }
                                         """.formatted(showtime.getId(), seat1.getId())))
                         .andExpect(status().isOk())
@@ -566,7 +696,7 @@ public class CheckoutIntegrationTest {
 
         String confirmResponse = mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId, "pm_success")))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
@@ -610,7 +740,8 @@ public class CheckoutIntegrationTest {
                                 .content("""
                                         {
                                         "showtimeId": %d,
-                                        "seatIds": [%d]
+                                        "seatIds": [%d],
+                                        "paymentMethodToken": "pm_success"
                                         }
                                         """.formatted(showtime.getId(), seat2.getId())))
                         .andExpect(status().isOk())
@@ -636,7 +767,7 @@ public class CheckoutIntegrationTest {
 
         String confirmResponse = mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId, "pm_success")))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
@@ -670,7 +801,7 @@ public class CheckoutIntegrationTest {
 
         String confirmResponse = mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId, "pm_success")))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
@@ -708,7 +839,7 @@ public class CheckoutIntegrationTest {
 
         String confirmResponse = mockMvc.perform(post("/checkout/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                        .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId, "pm_success")))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
@@ -795,10 +926,964 @@ public class CheckoutIntegrationTest {
                                         {
                                         "showtimeId": %d,
                                         "seatIds": [%d],
+                                        "paymentMethodToken": "pm_success",
                                         "guestEmail": "guest@example.com",
                                         "sessionId": "abc"
                                         }
                                         """.formatted(showtime.getId(), seat1.getId())))
                         .andExpect(status().isBadRequest());
+        }
+
+        // =========== checkout session tests ===========
+        @Test
+        void guestCanCreateCheckoutSessionForLockedSeats() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                JsonNode response = objectMapper.readTree(
+                        mockMvc.perform(post("/checkout/session")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("""
+                                                {
+                                                "showtimeId": %d,
+                                                "seatIds": [%d],
+                                                "guestEmail": "%s",
+                                                "sessionId": "%s"
+                                                }
+                                                """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.checkoutReference").isString())
+                                .andExpect(jsonPath("$.stripeCheckoutSessionId").isString())
+                                .andExpect(jsonPath("$.checkoutUrl").isString())
+                                .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"))
+                                .andExpect(jsonPath("$.checkoutUrl").value(startsWith("https://checkout.stripe.test/")))
+                                .andExpect(jsonPath("$.message").value("Checkout session created successfully"))
+                                .andReturn()
+                                .getResponse()
+                                .getContentAsString()
+                );
+
+                List<CheckoutSession> checkoutSessions = checkoutSessionRepository.findAll();
+                assertThat(checkoutSessions).hasSize(1);
+
+                CheckoutSession checkoutSession = checkoutSessions.getFirst();
+                assertThat(checkoutSession.getCheckoutReference()).isEqualTo(response.get("checkoutReference").asString());
+                assertThat(checkoutSession.getGuestEmail()).isEqualTo(guestEmail);
+                assertThat(checkoutSession.getGuestSessionId()).isEqualTo(sessionId);
+                assertThat(checkoutSession.getUser()).isNull();
+                assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.PENDING_PAYMENT);
+                assertThat(checkoutSession.getItemsSnapshotJson()).contains("\"seatId\":" + seat1.getId());
+
+                assertThat(reservationRepository.findAll()).isEmpty();
+
+                assertThat(checkoutSession.getStripeCheckoutSessionId())
+                        .startsWith("cs_test_");
+                assertThat(checkoutSession.getCheckoutUrl())
+                        .startsWith("https://checkout.stripe.test/");
+                assertThat(checkoutSession.getStripePaymentIntentId())
+                        .startsWith("pi_test_");
+        }
+
+        @Test
+        void authenticatedUserCanCreateCheckoutSessionForLockedSeats() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/session")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.checkoutReference").isString())
+                        .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"))
+                        .andExpect(jsonPath("$.checkoutUrl").value(startsWith("https://checkout.stripe.test/")));
+
+
+                List<CheckoutSession> checkoutSessions = checkoutSessionRepository.findAll();
+                assertThat(checkoutSessions).hasSize(1);
+                
+                CheckoutSession checkoutSession = checkoutSessions.getFirst();
+
+                assertThat(checkoutSession.getUser().getId()).isEqualTo(user.getId());
+                assertThat(checkoutSession.getGuestEmail()).isNull();
+                assertThat(checkoutSession.getGuestSessionId()).isNull();
+                assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.PENDING_PAYMENT);
+                assertThat(checkoutSession.getStripeCheckoutSessionId())
+                        .startsWith("cs_test_");
+                assertThat(checkoutSession.getCheckoutUrl())
+                        .startsWith("https://checkout.stripe.test/");
+                assertThat(checkoutSession.getStripePaymentIntentId())
+                        .startsWith("pi_test_");
+                        
+
+                assertThat(reservationRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void guestCannotCreateCheckoutSessionWithWrongSession() throws Exception {
+                String guestEmail = "guest@example.com";
+                lockAsGuest(guestEmail, seat1.getId());
+
+                mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "wrong-session"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail)))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message").value("No valid active lock found for this checkout session request"));
+
+                assertThat(checkoutSessionRepository.findAll()).isEmpty();
+                assertThat(reservationRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void authenticatedUserCannotCreateCheckoutSessionForAnotherUsersLock() throws Exception {
+                User otherUser = new User("Jane", "Doe", "jane@example.com", passwordEncoder.encode("password"), "07999999999");
+                otherUser.setRole(UserRole.CUSTOMER);
+                userRepository.save(otherUser);
+
+                String otherUserToken = loginAndGetToken("jane@example.com", "password");
+                String userToken = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + otherUserToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/session")
+                                .header("Authorization", "Bearer " + userToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message").value("No valid active lock found for this checkout session request"));
+
+                assertThat(checkoutSessionRepository.findAll()).isEmpty();
+                assertThat(reservationRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void guestCanReadCheckoutSessionStatusByReference() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String checkoutReference = objectMapper.readTree(createResponse).get("checkoutReference").asString();
+
+                mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.checkoutReference").value(checkoutReference))
+                        .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"))
+                        .andExpect(jsonPath("$.reservationId").doesNotExist())
+                        .andExpect(jsonPath("$.bookingReference").doesNotExist());
+        }
+
+        @Test
+        void authenticatedUserCannotReadAnotherUsersCheckoutSessionStatus() throws Exception {
+                User otherUser = new User("Jane", "Doe", "jane@example.com", passwordEncoder.encode("password"), "07999999999");
+                otherUser.setRole(UserRole.CUSTOMER);
+                userRepository.save(otherUser);
+
+                String otherUserToken = loginAndGetToken("jane@example.com", "password");
+                String userToken = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + otherUserToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk());
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .header("Authorization", "Bearer " + otherUserToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String checkoutReference = objectMapper.readTree(createResponse).get("checkoutReference").asString();
+
+                mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference)
+                                .header("Authorization", "Bearer " + userToken))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message").value("Checkout session does not belong to this user"));
+        }
+
+        @Test
+        void authenticatedUserCanReadOwnCheckoutSessionStatus() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk());
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String checkoutReference = objectMapper.readTree(createResponse).get("checkoutReference").asString();
+
+                mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference)
+                                .header("Authorization", "Bearer " + token))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.checkoutReference").value(checkoutReference))
+                        .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"))
+                        .andExpect(jsonPath("$.message").value("Checkout session is awaiting payment"));
+        }
+
+
+        // Stripe webhook handling tests
+        @Test
+        void stripeWebhookFinalizesCheckoutSessionAndCreatesReservation() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                stripeCheckoutSessionId,
+                                "pi_test_paid"
+                        ));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.FINALIZED);
+                assertThat(checkoutSession.getStripePaymentIntentId()).isEqualTo("pi_test_paid");
+                assertThat(checkoutSession.getCompletedAt()).isNotNull();
+                assertThat(checkoutSession.getReservation()).isNotNull();
+
+                List<Reservation> reservations = reservationRepository.findAll();
+                assertThat(reservations).hasSize(1);
+                assertThat(reservations.getFirst().getGuestEmail()).isEqualTo(guestEmail);
+                assertThat(reservations.getFirst().getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+                assertThat(reservations.getFirst().getPaymentStatus()).isEqualTo(PaymentStatus.PAID);
+
+                List<SeatLock> locks = seatLockRepository.findAll();
+                assertThat(locks)
+                        .anyMatch(lock -> lock.getSeat().getId().equals(seat1.getId())
+                                && lock.getGuestEmail().equals(guestEmail)
+                                && lock.getStatus() == LockStatus.CONVERTED_TO_RESERVATION);
+        }
+
+
+        @Test
+        void stripeWebhookIgnoresUnhandledEvent() throws Exception {
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(null);
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                assertThat(checkoutSessionRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void stripeWebhookDuplicateDoesNotCreateDuplicateReservation() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                stripeCheckoutSessionId,
+                                "pi_test_paid"
+                        ));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                assertThat(reservationRepository.findAll()).hasSize(1);
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.FINALIZED);
+                assertThat(checkoutSession.getReservation()).isNotNull();
+        }
+
+        @Test
+        void checkoutSessionStatusReturnsReservationAfterWebhookFinalization() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                JsonNode createJson = objectMapper.readTree(createResponse);
+                String checkoutReference = createJson.get("checkoutReference").asString();
+                String stripeCheckoutSessionId = createJson.get("stripeCheckoutSessionId").asString();
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                stripeCheckoutSessionId,
+                                "pi_test_paid"
+                        ));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                Reservation reservation = reservationRepository.findAll().getFirst();
+
+                mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.checkoutReference").value(checkoutReference))
+                        .andExpect(jsonPath("$.status").value("FINALIZED"))
+                        .andExpect(jsonPath("$.reservationId").value(reservation.getId()))
+                        .andExpect(jsonPath("$.bookingReference").value(reservation.getBookingReference()));
+        }
+
+        @Test
+        void stripeExpiredWebhookMarksPendingCheckoutSessionExpired() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(null);
+                when(stripeCheckoutService.parseCheckoutExpiredEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutExpiredEvent(stripeCheckoutSessionId));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.EXPIRED);
+
+                assertThat(reservationRepository.findAll()).isEmpty();
+
+                List<SeatLock> locks = seatLockRepository.findAll();
+                assertThat(locks)
+                        .anyMatch(lock -> lock.getSeat().getId().equals(seat1.getId())
+                                && lock.getGuestEmail().equals(guestEmail)
+                                && lock.getStatus() == LockStatus.LOCKED);
+        }
+
+        @Test
+        void stripeExpiredWebhookDoesNotChangeFinalizedCheckoutSession() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                stripeCheckoutSessionId,
+                                "pi_test_paid"
+                        ));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                CheckoutSession finalizedSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(finalizedSession.getStatus()).isEqualTo(CheckoutSessionStatus.FINALIZED);
+                assertThat(reservationRepository.findAll()).hasSize(1);
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(null);
+                when(stripeCheckoutService.parseCheckoutExpiredEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutExpiredEvent(stripeCheckoutSessionId));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.FINALIZED);
+                assertThat(reservationRepository.findAll()).hasSize(1);
+        }
+
+        // test for cancel checkoutSession
+        @Test
+        void guestCancelLockMarksPendingCheckoutSessionCancelled() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/cancel")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(cancelGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.message").value("Locks cancelled successfully"));
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.CANCELLED);
+                assertThat(checkoutSession.getCancelledAt()).isNotNull();
+
+                List<SeatLock> locks = seatLockRepository.findAll();
+                assertThat(locks)
+                        .anyMatch(lock -> lock.getSeat().getId().equals(seat1.getId())
+                                && lock.getGuestEmail().equals(guestEmail)
+                                && lock.getStatus() == LockStatus.EXPIRED);
+
+                assertThat(reservationRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void authenticatedCancelLockMarksPendingCheckoutSessionCancelled() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/session")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/cancel")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.message").value("Locks cancelled successfully"));
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.CANCELLED);
+                assertThat(checkoutSession.getCancelledAt()).isNotNull();
+
+                assertThat(reservationRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void cancelLockDoesNotChangeFinalizedCheckoutSession() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                stripeCheckoutSessionId,
+                                "pi_test_paid"
+                        ));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/cancel")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(cancelGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                        .andExpect(status().isConflict());
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.FINALIZED);
+                assertThat(reservationRepository.findAll()).hasSize(1);
+        }
+
+        // test for auto cleanup
+        @Test
+        void cleanupExpiresStalePendingCheckoutSessions() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk());
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                checkoutSession.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+                checkoutSessionRepository.save(checkoutSession);
+
+                int expiredCount = seatLockCleanupService.expireStalePendingCheckoutSessions();
+
+                assertThat(expiredCount).isEqualTo(1);
+
+                CheckoutSession expiredSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(expiredSession.getStatus()).isEqualTo(CheckoutSessionStatus.EXPIRED);
+
+                List<SeatLock> locks = seatLockRepository.findAll();
+                assertThat(locks)
+                        .anyMatch(lock -> lock.getSeat().getId().equals(seat1.getId())
+                                && lock.getGuestEmail().equals(guestEmail)
+                                && lock.getStatus() == LockStatus.LOCKED);
+        }
+
+        @Test
+        void cleanupDoesNotExpireFinalizedCheckoutSessions() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                stripeCheckoutSessionId,
+                                "pi_test_paid"
+                        ));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                checkoutSession.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+                checkoutSessionRepository.save(checkoutSession);
+
+                int expiredCount = seatLockCleanupService.expireStalePendingCheckoutSessions();
+
+                assertThat(expiredCount).isEqualTo(0);
+
+                CheckoutSession finalizedSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(finalizedSession.getStatus()).isEqualTo(CheckoutSessionStatus.FINALIZED);
+
+                List<SeatLock> locks = seatLockRepository.findAll();
+                assertThat(locks)
+                        .anyMatch(lock -> lock.getSeat().getId().equals(seat1.getId())
+                                && lock.getGuestEmail().equals(guestEmail)
+                                && lock.getStatus() == LockStatus.CONVERTED_TO_RESERVATION);
+        }
+
+        @Test
+        void cleanupExpiresTimedOutSeatLocks() throws Exception {
+                String guestEmail = "guest@example.com";
+                lockAsGuest(guestEmail, seat1.getId());
+
+                SeatLock lock = seatLockRepository.findAll().getFirst();
+                lock.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+                seatLockRepository.save(lock);
+
+                int expiredCount = seatLockCleanupService.expireTimedOutLocks();
+
+                assertThat(expiredCount).isEqualTo(1);
+
+                SeatLock expiredLock = seatLockRepository.findAll().getFirst();
+                assertThat(expiredLock.getStatus()).isEqualTo(LockStatus.EXPIRED);
+        }
+
+        @Test
+        void cleanupDoesNotExpireConvertedSeatLocks() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                mockMvc.perform(post("/checkout/confirm")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId, "pm_success")))
+                        .andExpect(status().isOk());
+
+                SeatLock convertedLock = seatLockRepository.findAll().getFirst();
+                assertThat(convertedLock.getStatus()).isEqualTo(LockStatus.CONVERTED_TO_RESERVATION);
+
+                convertedLock.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+                seatLockRepository.save(convertedLock);
+
+                int expiredCount = seatLockCleanupService.expireTimedOutLocks();
+
+                assertThat(expiredCount).isEqualTo(0);
+
+                SeatLock stillConvertedLock = seatLockRepository.findAll().getFirst();
+                assertThat(stillConvertedLock.getStatus()).isEqualTo(LockStatus.CONVERTED_TO_RESERVATION);
+        }
+
+        // test for handling completed webhook for edge cases
+        @Test
+        void completedWebhookAfterExpiredCheckoutMarksSessionFailedWithoutReservation() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                checkoutSession.setStatus(CheckoutSessionStatus.EXPIRED);
+                checkoutSessionRepository.save(checkoutSession);
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                stripeCheckoutSessionId,
+                                "pi_test_paid_after_expiry"
+                        ));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                CheckoutSession failedSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(failedSession.getStatus()).isEqualTo(CheckoutSessionStatus.FAILED);
+                assertThat(failedSession.getStripePaymentIntentId()).isEqualTo("pi_test_paid_after_expiry");
+                assertThat(failedSession.getFailedAt()).isNotNull();
+
+                assertThat(reservationRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void completedWebhookAfterCancelledCheckoutMarksSessionFailedWithoutReservation() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                mockMvc.perform(post("/checkout/cancel")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(cancelGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId)))
+                        .andExpect(status().isOk());
+
+                CheckoutSession cancelledSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(cancelledSession.getStatus()).isEqualTo(CheckoutSessionStatus.CANCELLED);
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                stripeCheckoutSessionId,
+                                "pi_test_paid_after_cancel"
+                        ));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                CheckoutSession failedSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(failedSession.getStatus()).isEqualTo(CheckoutSessionStatus.FAILED);
+                assertThat(failedSession.getStripePaymentIntentId()).isEqualTo("pi_test_paid_after_cancel");
+                assertThat(failedSession.getFailedAt()).isNotNull();
+
+                assertThat(reservationRepository.findAll()).isEmpty();
+        }
+
+
+        @Test
+        void completedWebhookWithExpiredLockMarksSessionFailedWithoutReservation() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                SeatLock lock = seatLockRepository.findAll().getFirst();
+                lock.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+                seatLockRepository.save(lock);
+
+                seatLockCleanupService.expireTimedOutLocks();
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                stripeCheckoutSessionId,
+                                "pi_test_paid_after_lock_expiry"
+                        ));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                CheckoutSession failedSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(failedSession.getStatus()).isEqualTo(CheckoutSessionStatus.FAILED);
+                assertThat(failedSession.getStripePaymentIntentId()).isEqualTo("pi_test_paid_after_lock_expiry");
+                assertThat(failedSession.getFailedAt()).isNotNull();
+
+                assertThat(reservationRepository.findAll()).isEmpty();
+
+                SeatLock expiredLock = seatLockRepository.findAll().getFirst();
+                assertThat(expiredLock.getStatus()).isEqualTo(LockStatus.EXPIRED);
         }
 }
