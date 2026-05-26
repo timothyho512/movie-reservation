@@ -21,6 +21,7 @@ import com.example.moviereservation.service.CheckoutSessionService;
 import com.example.moviereservation.dto.CheckoutSessionStatusResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import com.example.moviereservation.security.CustomUserPrincipal;
 import org.springframework.security.core.Authentication;
@@ -80,11 +81,15 @@ public class CheckoutController {
     @GetMapping("session/{checkoutReference}")
     public ResponseEntity<CheckoutSessionStatusResponse> getCheckoutSessionStatus(
             @PathVariable String checkoutReference,
+            @RequestParam(required = false) String guestEmail,
+            @RequestParam(required = false) String sessionId,
             Authentication authentication
     ) {
         return ResponseEntity.ok(
                 checkoutSessionService.getCheckoutSessionStatus(
                         checkoutReference,
+                        guestEmail,
+                        sessionId,
                         extractPrincipal(authentication)
                 )
         );

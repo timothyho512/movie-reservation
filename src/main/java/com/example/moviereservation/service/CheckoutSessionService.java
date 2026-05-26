@@ -372,12 +372,14 @@ public class CheckoutSessionService {
     @Transactional(readOnly = true)
     public CheckoutSessionStatusResponse getCheckoutSessionStatus(
             String checkoutReference,
+            String guestEmail,
+            String sessionId,
             CustomUserPrincipal principal
     ) {
         CheckoutSession checkoutSession = checkoutSessionRepository.findByCheckoutReference(checkoutReference)
                 .orElseThrow(() -> new ResourceNotFoundException("Checkout session not found with reference: " + checkoutReference));
 
-        validateCheckoutSessionStatusAccess(checkoutSession, principal);
+        validateCheckoutSessionStatusAccess(checkoutSession, guestEmail, sessionId, principal);
 
         CheckoutSessionStatus effectiveStatus = resolveEffectiveStatus(checkoutSession);
 
@@ -398,16 +400,42 @@ public class CheckoutSessionService {
         );
     }
 
-    private void validateCheckoutSessionStatusAccess(CheckoutSession checkoutSession, CustomUserPrincipal principal) {
+    private void validateCheckoutSessionStatusAccess(
+            CheckoutSession checkoutSession,
+            String guestEmail,
+            String sessionId,
+            CustomUserPrincipal principal
+    ) {
         if (checkoutSession.getUser() != null) {
+            if (guestEmail != null && !guestEmail.isBlank()
+                    || sessionId != null && !sessionId.isBlank()) {
+                throw new IllegalArgumentException("Guest identity must not be provided for authenticated checkout sessions");
+            }
+
             if (principal == null || !checkoutSession.getUser().getId().equals(principal.getUserId())) {
                 throw new SeatUnavailableException("Checkout session does not belong to this user");
             }
             return;
         }
 
-        // Guest status lookup currently relies on an unguessable checkoutReference.
-        // If this becomes public-facing, add guestEmail/sessionId verification to the request contract.
+        if (principal != null) {
+            throw new SeatUnavailableException("Checkout session does not belong to this user");
+        }
+
+        if (guestEmail == null || guestEmail.isBlank()) {
+            throw new IllegalArgumentException("Guest email is required for guest checkout status lookup");
+        }
+
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("Session ID is required for guest checkout status lookup");
+        }
+
+        if (checkoutSession.getGuestEmail() == null
+                || checkoutSession.getGuestSessionId() == null
+                || !checkoutSession.getGuestEmail().trim().equalsIgnoreCase(guestEmail.trim())
+                || !checkoutSession.getGuestSessionId().equals(sessionId)) {
+            throw new SeatUnavailableException("Checkout session does not belong to this guest");
+        }
     }
 
     private CheckoutSessionStatus resolveEffectiveStatus(CheckoutSession checkoutSession) {

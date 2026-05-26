@@ -448,8 +448,20 @@ Returns checkout status after redirecting back from Stripe.
 Auth: optional
 
 The backend uses the authenticated principal when provided. Guest status lookup
-is scoped by checkout reference and the ownership data stored on the checkout
-session.
+requires the checkout reference plus the guest identity that created the session.
+
+Guest query parameters:
+
+| Query param | Required | Notes |
+| --- | ---: | --- |
+| `guestEmail` | yes | Must match the checkout session guest email |
+| `sessionId` | yes | Must match the guest seat-lock session id |
+
+Example:
+
+```http
+GET /checkout/session/chk_abc123?guestEmail=guest@example.com&sessionId=guest-session-id
+```
 
 Success: `200 OK`
 

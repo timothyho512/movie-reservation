@@ -1180,7 +1180,39 @@ public class CheckoutIntegrationTest {
         }
 
         @Test
-        void guestCanReadCheckoutSessionStatusByReference() throws Exception {
+        void guestCanReadCheckoutSessionStatusByReferenceAndIdentity() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String checkoutReference = objectMapper.readTree(createResponse).get("checkoutReference").asString();
+
+                mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference)
+                                .param("guestEmail", guestEmail)
+                                .param("sessionId", sessionId))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.checkoutReference").value(checkoutReference))
+                        .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"))
+                        .andExpect(jsonPath("$.reservationId").doesNotExist())
+                        .andExpect(jsonPath("$.bookingReference").doesNotExist());
+        }
+
+        @Test
+        void guestCannotReadCheckoutSessionStatusByReferenceOnly() throws Exception {
                 String guestEmail = "guest@example.com";
                 String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
 
@@ -1202,11 +1234,37 @@ public class CheckoutIntegrationTest {
                 String checkoutReference = objectMapper.readTree(createResponse).get("checkoutReference").asString();
 
                 mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.message").value("Guest email is required for guest checkout status lookup"));
+        }
+
+        @Test
+        void guestCannotReadCheckoutSessionStatusWithWrongIdentity() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
                         .andExpect(status().isOk())
-                        .andExpect(jsonPath("$.checkoutReference").value(checkoutReference))
-                        .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"))
-                        .andExpect(jsonPath("$.reservationId").doesNotExist())
-                        .andExpect(jsonPath("$.bookingReference").doesNotExist());
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String checkoutReference = objectMapper.readTree(createResponse).get("checkoutReference").asString();
+
+                mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference)
+                                .param("guestEmail", "other@example.com")
+                                .param("sessionId", sessionId))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message").value("Checkout session does not belong to this guest"));
         }
 
         @Test
@@ -1450,7 +1508,9 @@ public class CheckoutIntegrationTest {
 
                 Reservation reservation = reservationRepository.findAll().getFirst();
 
-                mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference))
+                mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference)
+                                .param("guestEmail", guestEmail)
+                                .param("sessionId", sessionId))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.checkoutReference").value(checkoutReference))
                         .andExpect(jsonPath("$.status").value("FINALIZED"))
