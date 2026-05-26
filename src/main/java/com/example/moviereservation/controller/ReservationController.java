@@ -3,10 +3,9 @@ package com.example.moviereservation.controller;
 import com.example.moviereservation.dto.ReservationRequest;
 import com.example.moviereservation.dto.CancelReservationRequest;
 import com.example.moviereservation.dto.CancelReservationResponse;
+import com.example.moviereservation.dto.ReservationResponse;
 import com.example.moviereservation.entity.Reservation;
-import com.example.moviereservation.repository.ReservationRepository;
 import com.example.moviereservation.service.ReservationService;
-import org.apache.coyote.Response;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -25,14 +24,27 @@ public class ReservationController {
 
     // GET /api/reservations - Get all reservations
     @GetMapping
-    public ResponseEntity<List<Reservation>> getAllReservations() {
-        return ResponseEntity.ok(reservationService.getAllReservations());
+    public ResponseEntity<List<ReservationResponse>> getReservations(Authentication authentication) {
+        return ResponseEntity.ok(reservationService.getReservationsForUser(extractPrincipal(authentication)));
+    }
+
+    @GetMapping("/reference/{reservationReference}")
+    public ResponseEntity<ReservationResponse> getGuestReservationByReference(
+            @PathVariable String reservationReference,
+            @RequestParam String guestEmail
+    ) {
+        return ResponseEntity.ok(
+                reservationService.getGuestReservationByReference(reservationReference, guestEmail)
+        );
     }
 
     // Get /api/reservations/{id} - Get reservation by ID
     @GetMapping("/{id}")
-    public ResponseEntity<Reservation> getReservationById(@PathVariable Long id) {
-        return ResponseEntity.ok(reservationService.getReservationById(id));
+    public ResponseEntity<ReservationResponse> getReservationById(
+            @PathVariable Long id,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(reservationService.getReservationForUser(id, extractPrincipal(authentication)));
     }
 
     // POST /api/reservations = Create new reservation

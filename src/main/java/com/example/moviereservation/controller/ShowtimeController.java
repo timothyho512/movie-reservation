@@ -1,7 +1,9 @@
 package com.example.moviereservation.controller;
 
 import com.example.moviereservation.dto.GetAvailabilityResponse;
+import com.example.moviereservation.dto.SeatMapResponse;
 import com.example.moviereservation.dto.ShowtimeRequest;
+import com.example.moviereservation.dto.ShowtimeSummaryResponse;
 import com.example.moviereservation.entity.Showtime;
 import com.example.moviereservation.service.ShowtimeService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,14 +21,14 @@ public class ShowtimeController {
 
     // GET /api/showtimes - Get all showtimes
     @GetMapping
-    public ResponseEntity<List<Showtime>> getAllShowtimes() {
-        return ResponseEntity.ok(showtimeService.getAllShowtimes());
+    public ResponseEntity<List<ShowtimeSummaryResponse>> getAllShowtimes() {
+        return ResponseEntity.ok(showtimeService.getShowtimeSummaries());
     }
 
     // Get /api/showtimes/{id} - Get showtime by ID
     @GetMapping("/{id}")
-    public ResponseEntity<Showtime> getShowtimeByid(@PathVariable Long id) {
-        return ResponseEntity.ok(showtimeService.getShowtimeById(id));
+    public ResponseEntity<ShowtimeSummaryResponse> getShowtimeByid(@PathVariable Long id) {
+        return ResponseEntity.ok(showtimeService.getShowtimeSummary(id));
     }
 
     // POST /api/showtimes = Create new showtime
@@ -55,5 +57,10 @@ public class ShowtimeController {
     @GetMapping("/{id}/available-seats")
     public ResponseEntity<GetAvailabilityResponse> checkAvailability(@PathVariable Long id) {
         return ResponseEntity.ok(showtimeService.checkAvailability(id));
+    }
+
+    @GetMapping("/{id}/seat-map")
+    public ResponseEntity<SeatMapResponse> getSeatMap(@PathVariable Long id) {
+        return ResponseEntity.ok(showtimeService.getSeatMap(id));
     }
 }

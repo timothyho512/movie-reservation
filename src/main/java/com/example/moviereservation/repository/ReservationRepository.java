@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 
 import org.springframework.data.repository.query.Param;
 import java.util.List;
+import java.util.Optional;
 
 public interface ReservationRepository extends JpaRepository<Reservation, Long> {
 
@@ -35,4 +36,8 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
         )
     """)
     List<Long> findReservedSeatIdsForShowtime(@Param("showtimeId") Long showtimeId);
+
+    List<Reservation> findAllByUserIdOrderByBookingTimeDesc(Long userId);
+
+    Optional<Reservation> findByBookingReference(String bookingReference);
 }

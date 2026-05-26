@@ -4,7 +4,6 @@ import com.example.moviereservation.dto.SeatRequest;
 import com.example.moviereservation.entity.Seat;
 import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.service.SeatService;
-import org.apache.coyote.Response;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

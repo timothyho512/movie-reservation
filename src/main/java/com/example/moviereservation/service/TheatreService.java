@@ -1,8 +1,12 @@
 package com.example.moviereservation.service;
 
 import com.example.moviereservation.Exception.ResourceNotFoundException;
+import com.example.moviereservation.dto.TheatreDetailResponse;
 import com.example.moviereservation.dto.TheatreRequest;
+import com.example.moviereservation.dto.TheatreSummaryResponse;
+import com.example.moviereservation.entity.Screen;
 import com.example.moviereservation.entity.Theatre;
+import com.example.moviereservation.repository.ScreenRepository;
 import com.example.moviereservation.repository.TheatreRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -15,13 +19,44 @@ public class TheatreService {
     @Autowired
     private TheatreRepository theatreRepository;
 
+    @Autowired
+    private ScreenRepository screenRepository;
+
     public List<Theatre> getAllTheatres() {
         return theatreRepository.findAll();
+    }
+
+    public List<TheatreSummaryResponse> getTheatreSummaries() {
+        return theatreRepository.findAll().stream()
+                .map(this::toTheatreSummaryResponse)
+                .toList();
     }
 
     public Theatre getTheatreById(Long id) {
         return theatreRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Theatre not found with id: " + id));
+    }
+
+    public TheatreDetailResponse getTheatreDetail(Long id) {
+        Theatre theatre = getTheatreById(id);
+        List<TheatreDetailResponse.ScreenSummary> screens = screenRepository.findAllByTheatreIdOrderByNameAsc(id).stream()
+                .map(this::toScreenSummary)
+                .toList();
+
+        return new TheatreDetailResponse(
+                theatre.getId(),
+                theatre.getName(),
+                theatre.getAddress(),
+                theatre.getCity(),
+                theatre.getState(),
+                theatre.getCountry(),
+                theatre.getPostalCode(),
+                theatre.getPhoneNumber(),
+                theatre.getTotalScreens(),
+                theatre.getTotalSeats(),
+                theatre.isActive(),
+                screens
+        );
     }
 
     public Theatre createTheatre(TheatreRequest request) {
@@ -78,5 +113,31 @@ public class TheatreService {
     public void deleteTheatre(Long id) {
         Theatre theatre = getTheatreById(id);
         theatreRepository.delete(theatre);
+    }
+
+    private TheatreSummaryResponse toTheatreSummaryResponse(Theatre theatre) {
+        return new TheatreSummaryResponse(
+                theatre.getId(),
+                theatre.getName(),
+                theatre.getAddress(),
+                theatre.getCity(),
+                theatre.getState(),
+                theatre.getCountry(),
+                theatre.getPostalCode(),
+                theatre.getPhoneNumber(),
+                theatre.getTotalScreens(),
+                theatre.getTotalSeats(),
+                theatre.isActive()
+        );
+    }
+
+    private TheatreDetailResponse.ScreenSummary toScreenSummary(Screen screen) {
+        return new TheatreDetailResponse.ScreenSummary(
+                screen.getId(),
+                screen.getName(),
+                screen.getTotalSeats(),
+                screen.getScreenType(),
+                screen.isActive()
+        );
     }
 }

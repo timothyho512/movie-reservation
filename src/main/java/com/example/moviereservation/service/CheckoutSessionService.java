@@ -17,7 +17,6 @@ import com.example.moviereservation.entity.Showtime;
 import com.example.moviereservation.entity.ShowtimeStatus;
 import com.example.moviereservation.entity.User;
 import com.example.moviereservation.entity.Reservation;
-import com.example.moviereservation.repository.ReservationRepository;
 import com.example.moviereservation.repository.CheckoutSessionRepository;
 import com.example.moviereservation.repository.SeatLockRepository;
 import com.example.moviereservation.repository.SeatRepository;

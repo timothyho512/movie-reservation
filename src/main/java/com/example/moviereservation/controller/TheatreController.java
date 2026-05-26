@@ -1,10 +1,11 @@
 package com.example.moviereservation.controller;
 
+import com.example.moviereservation.dto.TheatreDetailResponse;
 import com.example.moviereservation.dto.TheatreRequest;
+import com.example.moviereservation.dto.TheatreSummaryResponse;
 import com.example.moviereservation.entity.Theatre;
 import com.example.moviereservation.repository.TheatreRepository;
 import com.example.moviereservation.service.TheatreService;
-import org.apache.coyote.Response;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,14 +21,14 @@ public class TheatreController {
     private TheatreService theatreService;
 
     @GetMapping
-    public ResponseEntity<List<Theatre>> getAllTheatres() {
-        return ResponseEntity.ok(theatreService.getAllTheatres());
+    public ResponseEntity<List<TheatreSummaryResponse>> getAllTheatres() {
+        return ResponseEntity.ok(theatreService.getTheatreSummaries());
     }
 
     // Get /api/theatres/{id} - Get theatre by ID
     @GetMapping("/{id}")
-    public ResponseEntity<Theatre> getTheatreById(@PathVariable Long id) {
-        return ResponseEntity.ok(theatreService.getTheatreById(id));
+    public ResponseEntity<TheatreDetailResponse> getTheatreById(@PathVariable Long id) {
+        return ResponseEntity.ok(theatreService.getTheatreDetail(id));
     }
 
     // POST /api/theatres = Create new theatre

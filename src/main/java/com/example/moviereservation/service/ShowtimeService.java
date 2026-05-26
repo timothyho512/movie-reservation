@@ -15,11 +15,14 @@ import com.example.moviereservation.repository.ReservationRepository;
 import com.example.moviereservation.repository.SeatLockRepository;
 import com.example.moviereservation.dto.GetAvailabilityResponse;
 import com.example.moviereservation.dto.SeatAvailabilityDto;
+import com.example.moviereservation.dto.SeatMapResponse;
+import com.example.moviereservation.dto.ShowtimeSummaryResponse;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.HashSet;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 
@@ -47,9 +50,19 @@ public class ShowtimeService {
         return showtimeRepository.findAll();
     }
 
+    public List<ShowtimeSummaryResponse> getShowtimeSummaries() {
+        return showtimeRepository.findAllByOrderByStartTimeAsc().stream()
+                .map(this::toShowtimeSummaryResponse)
+                .toList();
+    }
+
     public Showtime getShowtimeById(Long id) {
         return showtimeRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Showtime not found with id: " + id));
+    }
+
+    public ShowtimeSummaryResponse getShowtimeSummary(Long id) {
+        return toShowtimeSummaryResponse(getShowtimeById(id));
     }
 
     public Showtime createShowtime(ShowtimeRequest request) {
@@ -129,6 +142,49 @@ public class ShowtimeService {
         return getSeatsAvailability(showtimeId, seats);
     }
 
+    public SeatMapResponse getSeatMap(Long showtimeId) {
+        Showtime showtime = loadShowtimeById(showtimeId);
+        Screen screen = showtime.getScreen();
+        Movie movie = showtime.getMovie();
+        List<Seat> seats = getSeatsForScreenId(screen.getId());
+
+        Set<Long> reservedSeatIds = new HashSet<>(reservationRepository.findReservedSeatIdsForShowtime(showtimeId));
+        Set<Long> lockedSeatIds = new HashSet<>(seatLockRepository.findUnavailableLockedSeatIdsForShowtime(showtimeId));
+
+        List<SeatMapResponse.SeatSummary> seatSummaries = seats.stream()
+                .sorted(Comparator
+                        .comparing(Seat::getRowLabel)
+                        .thenComparing(Seat::getSeatNumber)
+                        .thenComparing(Seat::getId))
+                .map(seat -> new SeatMapResponse.SeatSummary(
+                        seat.getId(),
+                        seat.getRowLabel(),
+                        seat.getSeatNumber(),
+                        seat.getSeatType(),
+                        seat.getBasePrice(),
+                        !reservedSeatIds.contains(seat.getId()) && !lockedSeatIds.contains(seat.getId())
+                ))
+                .toList();
+
+        return new SeatMapResponse(
+                showtime.getId(),
+                showtime.getStatus(),
+                showtime.getStartTime(),
+                showtime.getEndTime(),
+                new SeatMapResponse.MovieSummary(
+                        movie.getId(),
+                        movie.getTitle(),
+                        movie.getDirector()
+                ),
+                new SeatMapResponse.ScreenSummary(
+                        screen.getId(),
+                        screen.getName(),
+                        screen.getScreenType()
+                ),
+                seatSummaries
+        );
+    }
+
     private Showtime loadShowtimeById(Long showtimeId) {
         return showtimeRepository.findById(showtimeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Showtime not found with id: " + showtimeId));
@@ -150,5 +206,37 @@ public class ShowtimeService {
             .toList();
         
         return new GetAvailabilityResponse(showtimeId, availability);
+    }
+
+    private ShowtimeSummaryResponse toShowtimeSummaryResponse(Showtime showtime) {
+        Movie movie = showtime.getMovie();
+        Screen screen = showtime.getScreen();
+        var theatre = screen.getTheatre();
+
+        return new ShowtimeSummaryResponse(
+                showtime.getId(),
+                new ShowtimeSummaryResponse.MovieSummary(
+                        movie.getId(),
+                        movie.getTitle(),
+                        movie.getDirector()
+                ),
+                new ShowtimeSummaryResponse.TheatreSummary(
+                        theatre.getId(),
+                        theatre.getName(),
+                        theatre.getCity(),
+                        theatre.getCountry()
+                ),
+                new ShowtimeSummaryResponse.ScreenSummary(
+                        screen.getId(),
+                        screen.getName(),
+                        screen.getScreenType()
+                ),
+                showtime.getStartTime(),
+                showtime.getEndTime(),
+                showtime.getBasePrice(),
+                showtime.getAvailableSeats(),
+                showtime.getTotalSeats(),
+                showtime.getStatus()
+        );
     }
 }

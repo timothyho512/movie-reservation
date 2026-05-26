@@ -2,7 +2,8 @@
 
 > Note:
 > This document describes the fake-payment v1 flow used before real provider integration.
-> For the planned Stripe-backed real-payment design, see `docs/checkout/checkout-payment-V2.md`.
+> This is now a legacy/dev-test flow. The canonical production payment contract is
+> the Stripe-backed flow in `docs/checkout/checkout-payment-V2.md`.
 
 ## Goal
 

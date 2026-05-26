@@ -6,7 +6,6 @@ import com.example.moviereservation.entity.Theatre;
 import com.example.moviereservation.repository.ScreenRepository;
 import com.example.moviereservation.repository.TheatreRepository;
 import com.example.moviereservation.service.ScreenService;
-import org.apache.coyote.Response;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

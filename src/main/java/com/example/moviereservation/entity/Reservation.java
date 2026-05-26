@@ -4,7 +4,6 @@ import jakarta.persistence.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 
 @Entity
@@ -45,6 +44,10 @@ public class Reservation {
     private BigDecimal totalPrice;  // Total amount paid
 
     @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 3)
+    private CurrencyCode currency;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private ReservationStatus status;  // PENDING, CONFIRMED, CANCELLED, COMPLETED, if pass showtime, then it is COMPLETED
 
@@ -68,6 +71,7 @@ public class Reservation {
         this.bookingReference = bookingReference;
         this.numberOfSeats = seats.size();
         this.totalPrice = totalPrice;
+        this.currency = CurrencyCode.GBP;  // Default currency
         this.status = ReservationStatus.PENDING;
         this.paymentStatus = PaymentStatus.PENDING;
         this.bookingTime = LocalDateTime.now();
@@ -155,6 +159,14 @@ public class Reservation {
 
     public void setTotalPrice(BigDecimal totalPrice) {
         this.totalPrice = totalPrice;
+    }
+
+    public CurrencyCode getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(CurrencyCode currency) {
+        this.currency = currency;
     }
 
     public ReservationStatus getStatus() {

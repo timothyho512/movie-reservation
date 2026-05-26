@@ -1,10 +1,12 @@
 package com.example.moviereservation.service;
 
+import com.example.moviereservation.Exception.AuthenticationFailedException;
 import com.example.moviereservation.Exception.ResourceNotFoundException;
 import com.example.moviereservation.Exception.SeatUnavailableException;
 import com.example.moviereservation.dto.CancelReservationRequest;
 import com.example.moviereservation.dto.CancelReservationResponse;
 import com.example.moviereservation.dto.ReservationRequest;
+import com.example.moviereservation.dto.ReservationResponse;
 import com.example.moviereservation.entity.*;
 import com.example.moviereservation.repository.ReservationRepository;
 import com.example.moviereservation.repository.SeatRepository;
@@ -18,6 +20,7 @@ import com.example.moviereservation.security.CustomUserPrincipal;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -42,6 +45,46 @@ public class ReservationService {
     public Reservation getReservationById(Long id) {
         return reservationRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Reservation not found with id: " + id));
+    }
+
+    @Transactional(readOnly = true)
+    public List<ReservationResponse> getReservationsForUser(CustomUserPrincipal principal) {
+        Long userId = requireAuthenticatedUser(principal);
+
+        return reservationRepository.findAllByUserIdOrderByBookingTimeDesc(userId).stream()
+                .map(this::toReservationResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public ReservationResponse getReservationForUser(Long reservationId, CustomUserPrincipal principal) {
+        Long userId = requireAuthenticatedUser(principal);
+
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Reservation not found with id: " + reservationId));
+
+        if (reservation.getUser() == null || !reservation.getUser().getId().equals(userId)) {
+            throw new SeatUnavailableException("Reservation does not belong to this user");
+        }
+
+        return toReservationResponse(reservation);
+    }
+
+    @Transactional(readOnly = true)
+    public ReservationResponse getGuestReservationByReference(String reservationReference, String guestEmail) {
+        if (guestEmail == null || guestEmail.isBlank()) {
+            throw new IllegalArgumentException("Guest email is required");
+        }
+
+        Reservation reservation = reservationRepository.findByBookingReference(reservationReference)
+                .orElseThrow(() -> new ResourceNotFoundException("Reservation not found with reference: " + reservationReference));
+
+        if (reservation.getGuestEmail() == null
+                || !reservation.getGuestEmail().trim().equalsIgnoreCase(guestEmail.trim())) {
+            throw new SeatUnavailableException("Reservation does not belong to this guest");
+        }
+
+        return toReservationResponse(reservation);
     }
 
     public Reservation createReservation(ReservationRequest request) {
@@ -83,6 +126,7 @@ public class ReservationService {
         reservation.setBookingReference(bookingReference);
         reservation.setNumberOfSeats(seats.size());
         reservation.setTotalPrice(totalPrice);
+        reservation.setCurrency(CurrencyCode.GBP);  // Default currency
         reservation.setStatus(request.getStatus() != null ? request.getStatus() : ReservationStatus.CONFIRMED);
         reservation.setPaymentStatus(request.getPaymentStatus() != null ? request.getPaymentStatus() : PaymentStatus.PAID);
         reservation.setBookingTime(LocalDateTime.now());
@@ -115,6 +159,7 @@ public class ReservationService {
         reservation.setBookingReference(bookingReference);
         reservation.setNumberOfSeats(seats.size());
         reservation.setTotalPrice(totalPrice);
+        reservation.setCurrency(CurrencyCode.GBP);  // Default currency
         reservation.setStatus(ReservationStatus.CONFIRMED);
         reservation.setPaymentStatus(PaymentStatus.PAID);
         reservation.setBookingTime(LocalDateTime.now());
@@ -143,6 +188,7 @@ public class ReservationService {
         reservation.setBookingReference(bookingReference);
         reservation.setNumberOfSeats(seats.size());
         reservation.setTotalPrice(totalPrice);
+        reservation.setCurrency(CurrencyCode.GBP);  // Default currency
         reservation.setStatus(ReservationStatus.CONFIRMED);
         reservation.setPaymentStatus(PaymentStatus.PAID);
         reservation.setBookingTime(LocalDateTime.now());
@@ -272,5 +318,58 @@ public class ReservationService {
         );
     }
 }
+
+    private Long requireAuthenticatedUser(CustomUserPrincipal principal) {
+        if (principal == null) {
+            throw new AuthenticationFailedException("Authentication is required to access this resource");
+        }
+
+        return principal.getUserId();
+    }
+
+    private ReservationResponse toReservationResponse(Reservation reservation) {
+        Showtime showtime = reservation.getShowtime();
+        Movie movie = showtime.getMovie();
+        Screen screen = showtime.getScreen();
+
+        List<ReservationResponse.SeatSummary> seats = reservation.getSeats().stream()
+                .sorted(Comparator
+                        .comparing(Seat::getRowLabel)
+                        .thenComparing(Seat::getSeatNumber)
+                        .thenComparing(Seat::getId))
+                .map(seat -> new ReservationResponse.SeatSummary(
+                        seat.getId(),
+                        seat.getRowLabel(),
+                        seat.getSeatNumber(),
+                        seat.getSeatType()
+                ))
+                .toList();
+
+        return new ReservationResponse(
+                reservation.getId(),
+                reservation.getBookingReference(),
+                reservation.getStatus(),
+                reservation.getPaymentStatus(),
+                new ReservationResponse.ShowtimeSummary(
+                        showtime.getId(),
+                        showtime.getStartTime(),
+                        showtime.getEndTime()
+                ),
+                new ReservationResponse.MovieSummary(
+                        movie.getId(),
+                        movie.getTitle(),
+                        movie.getDirector()
+                ),
+                new ReservationResponse.ScreenSummary(
+                        screen.getId(),
+                        screen.getName(),
+                        screen.getScreenType()
+                ),
+                seats,
+                reservation.getTotalPrice(),
+                reservation.getCurrency() != null ? reservation.getCurrency() : CurrencyCode.GBP,
+                reservation.getBookingTime()
+        );
+    }
 
 }

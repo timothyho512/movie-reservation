@@ -40,6 +40,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.example.moviereservation.entity.CheckoutSession;
 import com.example.moviereservation.entity.CheckoutSessionStatus;
 import com.example.moviereservation.repository.CheckoutSessionRepository;
+import com.example.moviereservation.entity.CurrencyCode;
 
 import com.example.moviereservation.dto.StripeCheckoutSessionResult;
 import com.example.moviereservation.dto.StripeCheckoutExpiredEvent;
@@ -194,6 +195,90 @@ public class CheckoutIntegrationTest {
     }
 
     @Test
+    void seatMapReturnsSeatMetadataAndAvailability() throws Exception {
+        lockAsGuest("guest@example.com", seat1.getId());
+
+        mockMvc.perform(get("/api/showtimes/{id}/seat-map", showtime.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.showtimeId").value(showtime.getId()))
+                .andExpect(jsonPath("$.showtimeStatus").value("UPCOMING"))
+                .andExpect(jsonPath("$.startTime").isString())
+                .andExpect(jsonPath("$.endTime").isString())
+                .andExpect(jsonPath("$.movie.id").value(showtime.getMovie().getId()))
+                .andExpect(jsonPath("$.movie.title").value("Test Movie"))
+                .andExpect(jsonPath("$.movie.director").value("Test Director"))
+                .andExpect(jsonPath("$.screen.id").value(showtime.getScreen().getId()))
+                .andExpect(jsonPath("$.screen.name").value("Screen 1"))
+                .andExpect(jsonPath("$.screen.screenType").value("STANDARD"))
+                .andExpect(jsonPath("$.seats[0].id").value(seat1.getId()))
+                .andExpect(jsonPath("$.seats[0].rowLabel").value("A"))
+                .andExpect(jsonPath("$.seats[0].seatNumber").value(1))
+                .andExpect(jsonPath("$.seats[0].seatType").value("REGULAR"))
+                .andExpect(jsonPath("$.seats[0].price").value(12.50))
+                .andExpect(jsonPath("$.seats[0].available").value(false))
+                .andExpect(jsonPath("$.seats[1].id").value(seat2.getId()))
+                .andExpect(jsonPath("$.seats[1].available").value(true))
+                .andExpect(jsonPath("$.seats[2].id").value(seat3.getId()))
+                .andExpect(jsonPath("$.seats[2].available").value(true));
+    }
+
+    @Test
+    void publicBrowseEndpointsReturnFrontendDtos() throws Exception {
+        mockMvc.perform(get("/api/movies"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(showtime.getMovie().getId()))
+                .andExpect(jsonPath("$[0].title").value("Test Movie"))
+                .andExpect(jsonPath("$[0].director").value("Test Director"));
+
+        mockMvc.perform(get("/api/movies/{id}", showtime.getMovie().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(showtime.getMovie().getId()))
+                .andExpect(jsonPath("$.title").value("Test Movie"))
+                .andExpect(jsonPath("$.director").value("Test Director"))
+                .andExpect(jsonPath("$.showtimes[0].id").value(showtime.getId()))
+                .andExpect(jsonPath("$.showtimes[0].movie.title").value("Test Movie"))
+                .andExpect(jsonPath("$.showtimes[0].theatre.name").value("Test Theatre"))
+                .andExpect(jsonPath("$.showtimes[0].screen.name").value("Screen 1"))
+                .andExpect(jsonPath("$.showtimes[0].basePrice").value(12.50))
+                .andExpect(jsonPath("$.showtimes[0].availableSeats").value(50))
+                .andExpect(jsonPath("$.showtimes[0].status").value("UPCOMING"));
+
+        mockMvc.perform(get("/api/showtimes"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(showtime.getId()))
+                .andExpect(jsonPath("$[0].movie.title").value("Test Movie"))
+                .andExpect(jsonPath("$[0].theatre.name").value("Test Theatre"))
+                .andExpect(jsonPath("$[0].screen.name").value("Screen 1"))
+                .andExpect(jsonPath("$[0].basePrice").value(12.50))
+                .andExpect(jsonPath("$[0].totalSeats").value(50));
+
+        mockMvc.perform(get("/api/showtimes/{id}", showtime.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(showtime.getId()))
+                .andExpect(jsonPath("$.movie.title").value("Test Movie"))
+                .andExpect(jsonPath("$.theatre.city").value("London"))
+                .andExpect(jsonPath("$.screen.screenType").value("STANDARD"));
+
+        mockMvc.perform(get("/api/theatres"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(showtime.getScreen().getTheatre().getId()))
+                .andExpect(jsonPath("$[0].name").value("Test Theatre"))
+                .andExpect(jsonPath("$[0].city").value("London"))
+                .andExpect(jsonPath("$[0].totalScreens").value(1))
+                .andExpect(jsonPath("$[0].totalSeats").value(50))
+                .andExpect(jsonPath("$[0].active").value(true));
+
+        mockMvc.perform(get("/api/theatres/{id}", showtime.getScreen().getTheatre().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(showtime.getScreen().getTheatre().getId()))
+                .andExpect(jsonPath("$.name").value("Test Theatre"))
+                .andExpect(jsonPath("$.screens[0].id").value(showtime.getScreen().getId()))
+                .andExpect(jsonPath("$.screens[0].name").value("Screen 1"))
+                .andExpect(jsonPath("$.screens[0].screenType").value("STANDARD"))
+                .andExpect(jsonPath("$.screens[0].active").value(true));
+    }
+
+    @Test
     void guestConfirmFailsWithWrongSession() throws Exception {
         lockAsGuest("guest@example.com", seat1.getId());
 
@@ -242,6 +327,7 @@ public class CheckoutIntegrationTest {
         assertThat(reservations.getFirst().getGuestEmail()).isEqualTo(guestEmail);
         assertThat(reservations.getFirst().getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
         assertThat(reservations.getFirst().getPaymentStatus()).isEqualTo(PaymentStatus.PAID);
+        assertThat(reservations.getFirst().getCurrency()).isEqualTo(CurrencyCode.GBP);
 
         List<SeatLock> locks = seatLockRepository.findAll();
         assertThat(locks)
@@ -384,6 +470,7 @@ public class CheckoutIntegrationTest {
                 List<Reservation> reservations = reservationRepository.findAll();
                 assertThat(reservations).hasSize(1);
                 assertThat(reservations.getFirst().getUser().getId()).isEqualTo(user.getId());
+                assertThat(reservations.getFirst().getCurrency()).isEqualTo(CurrencyCode.GBP);
         }
 
     @Test
@@ -1252,6 +1339,7 @@ public class CheckoutIntegrationTest {
                 assertThat(reservations.getFirst().getGuestEmail()).isEqualTo(guestEmail);
                 assertThat(reservations.getFirst().getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
                 assertThat(reservations.getFirst().getPaymentStatus()).isEqualTo(PaymentStatus.PAID);
+                assertThat(reservations.getFirst().getCurrency()).isEqualTo(CurrencyCode.GBP);
 
                 List<SeatLock> locks = seatLockRepository.findAll();
                 assertThat(locks)
@@ -1368,6 +1456,104 @@ public class CheckoutIntegrationTest {
                         .andExpect(jsonPath("$.status").value("FINALIZED"))
                         .andExpect(jsonPath("$.reservationId").value(reservation.getId()))
                         .andExpect(jsonPath("$.bookingReference").value(reservation.getBookingReference()));
+        }
+
+        @Test
+        void authenticatedUserCanListAndReadOwnReservationDetails() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+                Reservation reservation = finalizeAuthenticatedStripeReservation(token, seat1.getId());
+
+                mockMvc.perform(get("/api/reservations")
+                                .header("Authorization", "Bearer " + token))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$[0].reservationId").value(reservation.getId()))
+                        .andExpect(jsonPath("$[0].reservationReference").value(reservation.getBookingReference()))
+                        .andExpect(jsonPath("$[0].reservationStatus").value("CONFIRMED"))
+                        .andExpect(jsonPath("$[0].paymentStatus").value("PAID"))
+                        .andExpect(jsonPath("$[0].showtime.id").value(showtime.getId()))
+                        .andExpect(jsonPath("$[0].movie.title").value("Test Movie"))
+                        .andExpect(jsonPath("$[0].screen.name").value("Screen 1"))
+                        .andExpect(jsonPath("$[0].seats[0].id").value(seat1.getId()))
+                        .andExpect(jsonPath("$[0].seats[0].rowLabel").value("A"))
+                        .andExpect(jsonPath("$[0].seats[0].seatNumber").value(1))
+                        .andExpect(jsonPath("$[0].totalAmount").value(12.50))
+                        .andExpect(jsonPath("$[0].currency").value("GBP"))
+                        .andExpect(jsonPath("$[0].createdAt").isString());
+
+                mockMvc.perform(get("/api/reservations/{id}", reservation.getId())
+                                .header("Authorization", "Bearer " + token))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.reservationId").value(reservation.getId()))
+                        .andExpect(jsonPath("$.reservationReference").value(reservation.getBookingReference()))
+                        .andExpect(jsonPath("$.reservationStatus").value("CONFIRMED"))
+                        .andExpect(jsonPath("$.paymentStatus").value("PAID"))
+                        .andExpect(jsonPath("$.showtime.id").value(showtime.getId()))
+                        .andExpect(jsonPath("$.movie.title").value("Test Movie"))
+                        .andExpect(jsonPath("$.screen.name").value("Screen 1"))
+                        .andExpect(jsonPath("$.seats[0].id").value(seat1.getId()))
+                        .andExpect(jsonPath("$.totalAmount").value(12.50))
+                        .andExpect(jsonPath("$.currency").value("GBP"))
+                        .andExpect(jsonPath("$.createdAt").isString());
+        }
+
+        @Test
+        void authenticatedUserCannotReadAnotherUsersReservationDetails() throws Exception {
+                User otherUser = new User("Jane", "Doe", "jane@example.com", passwordEncoder.encode("password"), "07999999999");
+                otherUser.setRole(UserRole.CUSTOMER);
+                userRepository.save(otherUser);
+
+                String otherUserToken = loginAndGetToken("jane@example.com", "password");
+                String userToken = loginAndGetToken("jay@example.com", "password");
+                Reservation reservation = finalizeAuthenticatedStripeReservation(otherUserToken, seat1.getId());
+
+                mockMvc.perform(get("/api/reservations/{id}", reservation.getId())
+                                .header("Authorization", "Bearer " + userToken))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message").value("Reservation does not belong to this user"));
+        }
+
+        @Test
+        void guestCanLookupReservationByReferenceAndEmail() throws Exception {
+                String guestEmail = "guest@example.com";
+                Reservation reservation = finalizeGuestStripeReservation(guestEmail, seat1.getId());
+
+                mockMvc.perform(get("/api/reservations/reference/{reservationReference}", reservation.getBookingReference())
+                                .param("guestEmail", guestEmail))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.reservationId").value(reservation.getId()))
+                        .andExpect(jsonPath("$.reservationReference").value(reservation.getBookingReference()))
+                        .andExpect(jsonPath("$.reservationStatus").value("CONFIRMED"))
+                        .andExpect(jsonPath("$.paymentStatus").value("PAID"))
+                        .andExpect(jsonPath("$.showtime.id").value(showtime.getId()))
+                        .andExpect(jsonPath("$.movie.title").value("Test Movie"))
+                        .andExpect(jsonPath("$.screen.name").value("Screen 1"))
+                        .andExpect(jsonPath("$.seats[0].id").value(seat1.getId()))
+                        .andExpect(jsonPath("$.totalAmount").value(12.50))
+                        .andExpect(jsonPath("$.currency").value("GBP"))
+                        .andExpect(jsonPath("$.createdAt").isString());
+        }
+
+        @Test
+        void guestCannotLookupReservationWithWrongEmail() throws Exception {
+                Reservation reservation = finalizeGuestStripeReservation("guest@example.com", seat1.getId());
+
+                mockMvc.perform(get("/api/reservations/reference/{reservationReference}", reservation.getBookingReference())
+                                .param("guestEmail", "wrong@example.com"))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message").value("Reservation does not belong to this guest"));
+        }
+
+        @Test
+        void reservationHistoryEndpointsRequireAuthentication() throws Exception {
+                mockMvc.perform(get("/api/reservations"))
+                        .andExpect(status().isUnauthorized())
+                        .andExpect(jsonPath("$.message")
+                                .value("Authentication is required to access this resource"));
+
+                mockMvc.perform(get("/api/reservations/{id}", 1L))
+                        .andExpect(status().isUnauthorized())
+                        .andExpect(jsonPath("$.message")
+                                .value("Authentication is required to access this resource"));
         }
 
         @Test
@@ -1885,5 +2071,78 @@ public class CheckoutIntegrationTest {
 
                 SeatLock expiredLock = seatLockRepository.findAll().getFirst();
                 assertThat(expiredLock.getStatus()).isEqualTo(LockStatus.EXPIRED);
+        }
+
+        // helper function for reservation finalization in tests
+        private Reservation finalizeGuestStripeReservation(String guestEmail, Long seatId) throws Exception {
+                String sessionId = lockAsGuest(guestEmail, seatId).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seatId, guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                finalizeStripeCheckout(createResponse);
+
+                return reservationRepository.findAll().getFirst();
+        }
+
+        private Reservation finalizeAuthenticatedStripeReservation(String token, Long seatId) throws Exception {
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seatId)))
+                        .andExpect(status().isOk());
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seatId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                finalizeStripeCheckout(createResponse);
+
+                return reservationRepository.findAll().getFirst();
+        }
+
+        private void finalizeStripeCheckout(String createResponse) throws Exception {
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                stripeCheckoutSessionId,
+                                "pi_test_paid"
+                        ));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
         }
 }

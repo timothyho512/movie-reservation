@@ -1,10 +1,11 @@
 package com.example.moviereservation.controller;
 
+import com.example.moviereservation.dto.MovieCardResponse;
+import com.example.moviereservation.dto.MovieDetailResponse;
 import com.example.moviereservation.dto.MovieRequest;
 import com.example.moviereservation.entity.Movie;
 import com.example.moviereservation.repository.MovieRepository;
 import com.example.moviereservation.service.MovieService;
-import org.apache.coyote.Response;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,14 +21,14 @@ public class MovieController {
 
     // GET /api/movies - Get all movies
     @GetMapping
-    public ResponseEntity<List<Movie>> getAllMovies() {
-        return ResponseEntity.ok(movieService.getAllMovies());
+    public ResponseEntity<List<MovieCardResponse>> getAllMovies() {
+        return ResponseEntity.ok(movieService.getMovieCards());
     }
 
     // Get /api/movies/{id} - Get movie by ID
     @GetMapping("/{id}")
-    public ResponseEntity<Movie> getMovieById(@PathVariable Long id) {
-        return ResponseEntity.ok(movieService.getMovieById(id));
+    public ResponseEntity<MovieDetailResponse> getMovieById(@PathVariable Long id) {
+        return ResponseEntity.ok(movieService.getMovieDetail(id));
     }
 
     // POST /api/movies - Create new movie
