@@ -774,11 +774,29 @@ public class CheckoutIntegrationTest {
                 Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
 
                 mockMvc.perform(post("/api/reservations/" + reservationId + "/cancel")
-                                .header("Authorization", "Bearer " + token)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content("{}"))
+                                .header("Authorization", "Bearer " + token))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.message").value("Reservation cancelled successfully"));
+        }
+
+        @Test
+        void guestCancelFailsWithoutRequestBody() throws Exception {
+                String guestEmail = "guestcancel@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(confirmGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail, sessionId, "pm_success")))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+                mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.message").value("Exactly one of authenticated user or guestEmail must be provided"));
         }
 
         @Test

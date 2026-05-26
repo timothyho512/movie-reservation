@@ -72,11 +72,15 @@ public class ReservationController {
     @PostMapping("/{id}/cancel")
     public ResponseEntity<CancelReservationResponse> cancelReservation(
             @PathVariable Long id,
-            @RequestBody CancelReservationRequest request,
+            @RequestBody(required = false) CancelReservationRequest request,
             Authentication authentication
     ) {
         CancelReservationResponse response =
-                reservationService.cancelReservation(id, request, extractPrincipal(authentication));
+                reservationService.cancelReservation(
+                        id,
+                        request != null ? request : new CancelReservationRequest(),
+                        extractPrincipal(authentication)
+                );
         return ResponseEntity.ok(response);
     }
 
