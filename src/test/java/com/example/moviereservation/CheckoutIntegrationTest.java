@@ -354,6 +354,11 @@ public class CheckoutIntegrationTest {
                         .anyMatch(lock -> lock.getSeat().getId().equals(seat1.getId())
                                 && lock.getGuestEmail().equals(guestEmail)
                                 && lock.getStatus() == LockStatus.LOCKED);
+
+                mockMvc.perform(get("/api/showtimes/{id}/seat-map", showtime.getId()))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.seats[0].id").value(seat1.getId()))
+                        .andExpect(jsonPath("$.seats[0].available").value(false));
         }
 
         @Test
@@ -1660,7 +1665,12 @@ public class CheckoutIntegrationTest {
                 assertThat(locks)
                         .anyMatch(lock -> lock.getSeat().getId().equals(seat1.getId())
                                 && lock.getGuestEmail().equals(guestEmail)
-                                && lock.getStatus() == LockStatus.LOCKED);
+                                && lock.getStatus() == LockStatus.EXPIRED);
+
+                mockMvc.perform(get("/api/showtimes/{id}/seat-map", showtime.getId()))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.seats[0].id").value(seat1.getId()))
+                        .andExpect(jsonPath("$.seats[0].available").value(true));
         }
 
         @Test

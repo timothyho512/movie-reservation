@@ -631,9 +631,25 @@ public class CheckoutSessionService {
             return;
         }
 
+        expireActiveLocksForCheckoutSession(checkoutSession);
+
         checkoutSession.setStatus(CheckoutSessionStatus.EXPIRED);
 
         checkoutSessionRepository.save(checkoutSession);
+    }
+
+    private void expireActiveLocksForCheckoutSession(CheckoutSession checkoutSession) {
+        List<Seat> seats = loadSeatsFromCheckoutSnapshot(checkoutSession);
+
+        for (Seat seat : seats) {
+            seatLockRepository.cancelActiveLock(
+                    checkoutSession.getShowtime().getId(),
+                    seat.getId(),
+                    checkoutSession.getUser() != null ? checkoutSession.getUser().getId() : null,
+                    checkoutSession.getGuestSessionId(),
+                    checkoutSession.getGuestEmail()
+            );
+        }
     }
 
 }
