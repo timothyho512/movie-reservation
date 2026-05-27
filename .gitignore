@@ -43,3 +43,5 @@ out/
 
 *.puml
 .DS_Store
+
+/docs/self_purpose/

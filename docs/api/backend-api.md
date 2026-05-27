@@ -2,8 +2,8 @@
 
 This document is the canonical frontend-facing API contract for the current monolith.
 It describes the routes that should remain stable while the backend is being
-stabilized. Admin/internal CRUD routes are listed separately because several still
-return JPA entities and should not be treated as stable frontend contracts yet.
+stabilized. Admin/internal CRUD routes are listed separately because they are not
+the primary frontend booking flows yet.
 
 Base URL in local development:
 
@@ -740,6 +740,4 @@ The frontend-facing contract should stay DTO-based:
 Current follow-up candidates:
 
 - move internal CRUD routes behind explicit admin authorization
-- move internal CRUD routes behind explicit admin authorization
 - add contract integration tests for every route in this document
-- verify Stripe webhook idempotency with duplicate event tests

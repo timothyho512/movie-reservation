@@ -1,263 +1,268 @@
-# Checkout Payment v1
+# Checkout Payment
 
-> Note:
-> This document describes the fake-payment v1 flow used before real provider integration.
-> This is now a legacy/dev-test flow. The canonical production payment contract is
-> the Stripe-backed flow in `docs/checkout/checkout-payment-V2.md`.
+This is the practical Stripe Checkout flow used by the backend.
 
-## Goal
-
-Add payment-step realism to checkout without introducing a real payment provider yet.
-
-This version keeps the current frontend-style flow:
+The frontend should treat this as the production-style booking path:
 
 1. lock seats
-2. confirm checkout
+2. create a Stripe Checkout Session
+3. redirect the customer to Stripe
+4. let Stripe call the webhook
+5. poll checkout status
+6. show the finalized reservation
 
-In v1, `confirm checkout` means:
+`POST /checkout/confirm` still exists as a legacy fake-payment path for development/tests. New frontend booking work should use `POST /checkout/session` and the Stripe webhook flow.
 
-- validate lock ownership
-- simulate payment attempt
-- if payment succeeds, create reservation
-- if payment fails, do not create reservation
+## Local Setup
 
-## Scope
+Start the backend and Stripe listener as described in `docs/local-development.md`.
 
-In scope:
+The local webhook command is:
 
-- simulated payment inside `/checkout/confirm`
-- clearer status semantics
-- checkout tests for success/failure paths
-- minimal backend-first changes
+```sh
+stripe listen --forward-to localhost:8080/checkout/webhook/stripe
+```
 
-Out of scope:
+Copy the printed `whsec_...` value into `.env` as `STRIPE_WEBHOOK_SECRET`, then restart the backend.
 
-- real payment provider integration
-- separate `/checkout/pay` endpoint
-- payment history table / `PaymentTransaction` entity
-- broad reservation API redesign
+## Core Rules
 
-## Endpoint Model
+- `SeatLock` is the temporary hold before payment succeeds.
+- `CheckoutSession` stores the internal payment attempt and Stripe IDs.
+- `Reservation` is created only after a verified `checkout.session.completed` webhook.
+- The Stripe webhook is authoritative; the frontend success redirect does not create a reservation.
+- Guest ownership uses `guestEmail + sessionId`.
+- Authenticated ownership uses the JWT principal only.
+- Duplicate Stripe webhooks are safe: repeated completed/expired events do not create duplicate reservations.
 
-### POST `/checkout/lock`
+## POST `/checkout/lock`
 
-Purpose:
+Creates temporary seat locks.
 
-- temporarily hold seats for a guest or authenticated user
+Guest request:
+
+```json
+{
+  "showtimeId": 1,
+  "seatIds": [10, 11],
+  "guestEmail": "guest@example.com"
+}
+```
+
+Authenticated request:
+
+```json
+{
+  "showtimeId": 1,
+  "seatIds": [10, 11]
+}
+```
+
+Response:
+
+```json
+{
+  "showtimeId": 1,
+  "lockedSeatIds": [10, 11],
+  "sessionId": "guest-session-id",
+  "expiresAt": "2026-05-28T19:30:00",
+  "message": "Seats locked successfully"
+}
+```
+
+For authenticated users, `sessionId` is `null`.
+
+## POST `/checkout/session`
+
+Creates the internal checkout session, creates the Stripe Checkout Session, stores Stripe IDs, and returns the redirect URL.
+
+Guest request:
+
+```json
+{
+  "showtimeId": 1,
+  "seatIds": [10, 11],
+  "guestEmail": "guest@example.com",
+  "sessionId": "guest-session-id"
+}
+```
+
+Authenticated request:
+
+```json
+{
+  "showtimeId": 1,
+  "seatIds": [10, 11]
+}
+```
+
+Response:
+
+```json
+{
+  "checkoutReference": "chk_1776170000000abcdef",
+  "stripeCheckoutSessionId": "cs_test_123",
+  "checkoutUrl": "https://checkout.stripe.com/c/pay/cs_test_123",
+  "status": "PENDING_PAYMENT",
+  "expiresAt": "2026-05-28T19:30:00",
+  "message": "Checkout session created successfully"
+}
+```
+
+Important behavior:
+
+- all requested seats must already be actively locked by the caller
+- no reservation is created here
+- locks stay `LOCKED` while the customer is on Stripe
+- `checkoutReference` is the frontend-safe reference used for status polling
+- `stripeCheckoutSessionId` is stored for webhook matching
+
+## Stripe Redirect
+
+After `POST /checkout/session`, redirect the customer to `checkoutUrl`.
+
+Do not create a reservation from the frontend success URL. The success URL only tells the frontend to poll the backend.
+
+## POST `/checkout/webhook/stripe`
+
+Receives Stripe webhooks.
+
+Handled events:
+
+- `checkout.session.completed`
+- `checkout.session.expired`
 
 Behavior:
 
-- unchanged from current flow
-- creates active `SeatLock` rows
-- returns guest `sessionId` when relevant
+- verifies the Stripe signature
+- ignores unhandled event types safely
+- ignores unknown Stripe session IDs safely
+- handles duplicate events idempotently
 
-### POST `/checkout/confirm`
+Completed webhook behavior:
 
-Purpose:
+1. load checkout session by `stripeCheckoutSessionId`
+2. lock that database row while finalizing
+3. exit safely if it is already `FINALIZED`
+4. fail safely if it was `CANCELLED`, `EXPIRED`, or `FAILED`
+5. validate the seat locks are still active and owned by the checkout owner
+6. convert locks to `CONVERTED_TO_RESERVATION`
+7. create reservation with `CONFIRMED + PAID`
+8. link reservation to checkout session
+9. mark checkout session `FINALIZED`
 
-- final checkout action
-- acts as payment attempt + booking finalization
+Expired webhook behavior:
 
-Behavior:
+1. load checkout session by `stripeCheckoutSessionId`
+2. lock that database row while expiring
+3. exit safely if it is already `FINALIZED`, `CANCELLED`, or `EXPIRED`
+4. expire the active locks for the checkout session
+5. mark checkout session `EXPIRED`
 
-1. validate request identity
-2. validate active lock ownership
-3. validate lock not expired
-4. simulate payment result
-5. if payment succeeds:
-   - create reservation
-   - mark reservation as paid and confirmed
-   - convert locks to reservation
-6. if payment fails:
-   - do not create reservation
-   - keep lock active until expiry so user can retry
+## GET `/checkout/session/{checkoutReference}`
 
-## State Semantics
+Returns checkout status for frontend polling after the Stripe redirect.
 
-### LockStatus
+Guest lookup requires:
 
-- `LOCKED`
-  - seats are held
-  - checkout can still be confirmed
-- `PROCESSING`
-  - internal transitional state during confirm
-  - prevents concurrent finalize attempts
-- `CONVERTED_TO_RESERVATION`
-  - lock has been finalized into a reservation
-- `EXPIRED`
-  - lock released due to cancel/timeout
+```http
+GET /checkout/session/chk_1776170000000abcdef?guestEmail=guest@example.com&sessionId=guest-session-id
+```
 
-### ReservationStatus
+Authenticated lookup requires:
 
-Recommended v1 meaning:
+```http
+Authorization: Bearer <jwt>
+```
 
-- `CONFIRMED`
-  - successful paid booking
-- `CANCELLED`
-  - booking cancelled
-- `COMPLETED`
-  - showtime has passed / booking fulfilled
+Pending response:
 
-`PENDING` should not be used for checkout-created reservations in v1 if reservation is only created after successful payment.
+```json
+{
+  "checkoutReference": "chk_1776170000000abcdef",
+  "status": "PENDING_PAYMENT",
+  "reservationId": null,
+  "bookingReference": null,
+  "message": "Checkout session is awaiting payment"
+}
+```
 
-### PaymentStatus
+Finalized response:
 
-- `PAID`
-  - simulated payment succeeded
-- `FAILED`
-  - simulated payment failed
-- `REFUNDED`
-  - booking later refunded
-- `PENDING`
-  - avoid using this in finalized checkout flow unless there is a real async payment stage
+```json
+{
+  "checkoutReference": "chk_1776170000000abcdef",
+  "status": "FINALIZED",
+  "reservationId": 42,
+  "bookingReference": "BK1776170000000",
+  "message": "Checkout session finalized successfully"
+}
+```
 
-## State Transitions
+## Statuses
 
-### Happy path
+`CheckoutSessionStatus` values:
 
-1. user locks seats
-2. lock rows created with `LOCKED`
-3. user confirms checkout
-4. backend simulates payment success
-5. reservation created with:
-   - `ReservationStatus.CONFIRMED`
-   - `PaymentStatus.PAID`
-6. seat locks become `CONVERTED_TO_RESERVATION`
+- `PENDING_PAYMENT`: customer has a Stripe Checkout Session but no completed webhook yet
+- `FINALIZED`: payment completed and reservation was created
+- `EXPIRED`: Stripe checkout expired or local checkout timed out
+- `CANCELLED`: user cancelled the lock before payment finalized
+- `FAILED`: Stripe reported completion after the checkout could no longer be finalized safely
+- `PAID`: available enum value, not the normal final state in the current flow
 
-### Payment failure path
+`LockStatus` values:
 
-1. user locks seats
-2. user confirms checkout
-3. backend simulates payment failure
-4. no reservation is created
-5. lock remains `LOCKED`
-6. user may retry confirm while lock is still valid
+- `LOCKED`: temporary active hold
+- `CONVERTED_TO_RESERVATION`: lock became a paid reservation
+- `EXPIRED`: lock was released
+- `PROCESSING`: legacy/internal transition used by the fake confirm path
 
-### Expiry path
+## Lifecycle
 
-1. user locks seats
-2. lock expires before successful confirm
-3. scheduler marks lock `EXPIRED`
-4. confirm fails because no valid active lock exists
+Happy path:
 
-### Cancel lock path
+```text
+POST /checkout/lock
+POST /checkout/session
+redirect to Stripe checkoutUrl
+Stripe sends checkout.session.completed
+backend creates reservation
+GET /checkout/session/{checkoutReference}
+GET /api/reservations/{id}
+```
 
-1. user locks seats
-2. user cancels lock before successful confirm
-3. lock becomes `EXPIRED`
-4. seats become available again
+Abandoned payment:
 
-### Reservation cancel path
+```text
+POST /checkout/lock
+POST /checkout/session
+customer does not pay
+Stripe sends checkout.session.expired or local cleanup expires the checkout
+locks are released
+no reservation is created
+```
 
-1. reservation already exists
-2. user cancels reservation through reservation endpoint
-3. reservation becomes `CANCELLED`
-4. seats are returned to showtime inventory
-5. payment refund behavior can be added later
+Duplicate webhook:
 
-## Confirm Endpoint Rules
+```text
+Stripe sends checkout.session.completed twice
+first webhook finalizes the checkout
+second webhook sees FINALIZED and returns 200 without creating another reservation
+```
 
-### Success
+## Test Coverage
 
-Return:
+Current backend tests cover:
 
-- `reservationId`
-- `bookingReference`
-- `status = CONFIRMED`
-- `paymentStatus = PAID`
-- `totalPrice`
-- `seatIds`
-- success message
-
-### Failure: payment failed
-
-Return:
-
-- no reservation created
-- clear failure message such as `Payment failed`
-- lock remains usable until expiry
-
-### Failure: invalid lock
-
-Return:
-
-- conflict-style error
-- clear message such as:
-  - `No valid active lock found for seat X for this confirmation request`
-
-## Fake Payment Design
-
-For v1, payment is simulated inside `confirm`.
-
-Possible request input options:
-
-- `simulatePaymentSuccess: true|false`
-- or `paymentMethodToken` with test values like:
-  - `pm_success`
-  - `pm_fail`
-
-Recommendation:
-
-- use a fake token field rather than a boolean
-- it leaves the contract closer to future real payment integration
-
-Example:
-
-- `pm_success` => payment succeeds
-- `pm_fail` => payment fails
-
-## Persistence Strategy
-
-For v1, do not add a new payment entity.
-
-Use the existing checkout flow and reservation model:
-
-- only create a `Reservation` after successful payment
-- store final payment result on `Reservation`
-
-No unpaid reservation rows should be created in this version.
-
-## Important Consistency Rules
-
-- `confirm` should not return “reservation confirmed” unless payment succeeded
-- checkout-created reservations should not be saved as `PENDING/PENDING`
-- reserved-seat queries should continue to rely on actual reservations plus active locks
-- active seat locks remain the only temporary hold mechanism before booking exists
-
-## Test Cases
-
-Add integration coverage for:
-
-- guest confirm succeeds when payment succeeds
-- authenticated confirm succeeds when payment succeeds
-- guest confirm fails when payment fails
-- authenticated confirm fails when payment fails
-- confirm fails with wrong guest email/session
-- confirm fails after lock expiry
-- no reservation created on failed payment
-- lock remains retryable after failed payment
-- seat cannot be relocked after successful confirm
-- reservation cancel still works after successful paid booking
-
-## Non-Goals For V1
-
-Not doing yet:
-
-- separate payment endpoint
-- async payment workflow
-- payment authorization/capture split
-- webhook handling
-- payment audit/history model
-- refunds beyond status placeholders
-
-## Implementation Direction
-
-Minimal implementation path:
-
-1. clarify enum semantics
-2. extend confirm request/response for fake payment input/result
-3. insert payment simulation into `CheckoutService.confirmCheckout`
-4. on success, create reservation as `CONFIRMED + PAID`
-5. on failure, return error without creating reservation
-6. update tests
-7. update docs/messages to match actual behavior
+- guest and authenticated checkout session creation
+- checkout reference and Stripe session ID persistence
+- wrong owner/session rejection
+- checkout status lookup
+- Stripe signature parsing
+- invalid Stripe signature rejection
+- completed webhook reservation finalization
+- duplicate completed webhook idempotency
+- expired webhook lock release
+- duplicate expired webhook idempotency
+- unknown/unhandled webhook events returning safely
+- cancelled/expired checkout completion failure paths

@@ -4,6 +4,14 @@
 
 Expose finalized booking information to customers after Stripe Checkout creates a reservation.
 
+Use this locally with the backend running at:
+
+```text
+http://localhost:8080
+```
+
+For a full local booking path, start the services in `docs/local-development.md`, complete checkout through Stripe, then use these reservation endpoints.
+
 This feature completes the post-payment user journey:
 
 1. customer locks seats
@@ -236,7 +244,7 @@ The reservation read API does not create reservations.
 Reservations are created by:
 
 - Stripe `checkout.session.completed` webhook in the real payment flow
-- legacy fake-payment `/checkout/confirm` in the development/test flow
+- legacy fake-payment `/checkout/confirm` in development/test scenarios only
 
 The expected production path is:
 

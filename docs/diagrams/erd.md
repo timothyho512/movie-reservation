@@ -2,6 +2,14 @@
 
 This ERD reflects the current backend model after JWT ownership and Stripe Checkout integration.
 
+Use it when you need to understand how the API response fields map back to persisted data:
+
+- reservation responses come from `RESERVATION`, `SHOWTIME`, `MOVIE`, `SCREEN`, and `SEAT`
+- checkout status responses come from `CHECKOUT_SESSION`
+- seat-map availability comes from `SEAT`, active `SEAT_LOCK` rows, and existing `RESERVATION_SEATS`
+
+For local setup and seeded demo data, see `docs/local-development.md`.
+
 ```mermaid
 erDiagram
     USER ||--o{ RESERVATION : owns
