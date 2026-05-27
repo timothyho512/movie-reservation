@@ -49,16 +49,16 @@ public class ReservationController {
 
     // POST /api/reservations = Create new reservation
     @PostMapping
-    public ResponseEntity<Reservation> createReservation(@RequestBody ReservationRequest request) {
+    public ResponseEntity<ReservationResponse> createReservation(@RequestBody ReservationRequest request) {
         Reservation reservation = reservationService.createReservation(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(reservation);
+        return ResponseEntity.status(HttpStatus.CREATED).body(reservationService.toReservationResponse(reservation));
     }
 
     // Put /api/reservations/{id} - Update reservation
     @PutMapping("/{id}")
-    public ResponseEntity<Reservation> updateReservation(@PathVariable Long id, @RequestBody ReservationRequest request) {
+    public ResponseEntity<ReservationResponse> updateReservation(@PathVariable Long id, @RequestBody ReservationRequest request) {
         Reservation reservation = reservationService.updateReservation(id, request);
-        return ResponseEntity.ok(reservation);
+        return ResponseEntity.ok(reservationService.toReservationResponse(reservation));
     }
 
     // DELETE /api/reservations/{id} - Delete reservation

@@ -4,14 +4,12 @@ import com.example.moviereservation.dto.TheatreDetailResponse;
 import com.example.moviereservation.dto.TheatreRequest;
 import com.example.moviereservation.dto.TheatreSummaryResponse;
 import com.example.moviereservation.entity.Theatre;
-import com.example.moviereservation.repository.TheatreRepository;
 import com.example.moviereservation.service.TheatreService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
@@ -33,16 +31,16 @@ public class TheatreController {
 
     // POST /api/theatres = Create new theatre
     @PostMapping
-    public ResponseEntity<Theatre> createTheatre(@RequestBody TheatreRequest request) {
+    public ResponseEntity<TheatreDetailResponse> createTheatre(@RequestBody TheatreRequest request) {
         Theatre savedTheatre = theatreService.createTheatre(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(savedTheatre);
+        return ResponseEntity.status(HttpStatus.CREATED).body(theatreService.getTheatreDetail(savedTheatre.getId()));
     }
 
     // Put /api/theatres/{id} - Update theatre
     @PutMapping("/{id}")
-    public ResponseEntity<Theatre> updateTheatre(@PathVariable Long id, @RequestBody TheatreRequest request) {
+    public ResponseEntity<TheatreDetailResponse> updateTheatre(@PathVariable Long id, @RequestBody TheatreRequest request) {
         Theatre updatedTheatre = theatreService.updateTheatre(id, request);
-        return ResponseEntity.ok(updatedTheatre);
+        return ResponseEntity.ok(theatreService.getTheatreDetail(updatedTheatre.getId()));
     }
 
     // DELETE /api/theatres/{id} - Delete theatre

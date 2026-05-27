@@ -33,16 +33,16 @@ public class ShowtimeController {
 
     // POST /api/showtimes = Create new showtime
     @PostMapping
-    public ResponseEntity<Showtime> createShowtime(@RequestBody ShowtimeRequest request) {
+    public ResponseEntity<ShowtimeSummaryResponse> createShowtime(@RequestBody ShowtimeRequest request) {
         Showtime showtime = showtimeService.createShowtime(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(showtime);
+        return ResponseEntity.status(HttpStatus.CREATED).body(showtimeService.getShowtimeSummary(showtime.getId()));
     }
 
     // Put /api/showtimes/{id} - Update showtime
     @PutMapping("/{id}")
-    public ResponseEntity<Showtime> updateShowtime(@PathVariable Long id, @RequestBody ShowtimeRequest request) {
+    public ResponseEntity<ShowtimeSummaryResponse> updateShowtime(@PathVariable Long id, @RequestBody ShowtimeRequest request) {
         Showtime showtime = showtimeService.updateShowtime(id, request);
-        return ResponseEntity.ok(showtime);
+        return ResponseEntity.ok(showtimeService.getShowtimeSummary(showtime.getId()));
     }
 
     // DELETE /api/showtimes/{id} - Delete showtime

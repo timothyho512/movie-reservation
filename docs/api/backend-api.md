@@ -676,38 +676,39 @@ Success: `200 OK`
 
 ## Internal CRUD Routes
 
-These routes exist in the monolith but are not yet clean frontend contracts.
-Several return raw entities and should be treated as admin/internal until they
-are moved behind explicit admin authorization and DTO responses.
+These routes exist in the monolith but are admin/internal rather than primary
+frontend booking flows. They should be moved behind explicit admin authorization
+before production use, but their response bodies are DTO-based and should not
+expose raw JPA entity graphs.
 
 | Method | Path | Current note |
 | --- | --- | --- |
-| `POST` | `/api/movies` | Creates movie, returns `Movie` entity |
-| `PUT` | `/api/movies/{id}` | Updates movie, returns `Movie` entity |
+| `POST` | `/api/movies` | Creates movie, returns `MovieDetailResponse` |
+| `PUT` | `/api/movies/{id}` | Updates movie, returns `MovieDetailResponse` |
 | `DELETE` | `/api/movies/{id}` | Deletes movie |
-| `POST` | `/api/theatres` | Creates theatre, returns `Theatre` entity |
-| `PUT` | `/api/theatres/{id}` | Updates theatre, returns `Theatre` entity |
+| `POST` | `/api/theatres` | Creates theatre, returns `TheatreDetailResponse` |
+| `PUT` | `/api/theatres/{id}` | Updates theatre, returns `TheatreDetailResponse` |
 | `DELETE` | `/api/theatres/{id}` | Deletes theatre |
-| `GET` | `/api/screens` | Returns `Screen` entities |
-| `GET` | `/api/screens/{id}` | Returns `Screen` entity |
-| `POST` | `/api/screens` | Creates screen, returns `Screen` entity |
-| `PUT` | `/api/screens/{id}` | Updates screen, returns `Screen` entity |
+| `GET` | `/api/screens` | Returns `ScreenResponse` list |
+| `GET` | `/api/screens/{id}` | Returns `ScreenResponse` |
+| `POST` | `/api/screens` | Creates screen, returns `ScreenResponse` |
+| `PUT` | `/api/screens/{id}` | Updates screen, returns `ScreenResponse` |
 | `DELETE` | `/api/screens/{id}` | Deletes screen |
-| `GET` | `/api/seats` | Returns `Seat` entities |
-| `GET` | `/api/seats/{id}` | Returns `Seat` entity |
-| `POST` | `/api/seats` | Creates seat, returns `Seat` entity |
-| `PUT` | `/api/seats/{id}` | Updates seat, returns `Seat` entity |
+| `GET` | `/api/seats` | Returns `SeatResponse` list |
+| `GET` | `/api/seats/{id}` | Returns `SeatResponse` |
+| `POST` | `/api/seats` | Creates seat, returns `SeatResponse` |
+| `PUT` | `/api/seats/{id}` | Updates seat, returns `SeatResponse` |
 | `DELETE` | `/api/seats/{id}` | Deletes seat |
-| `POST` | `/api/showtimes` | Creates showtime, returns `Showtime` entity |
-| `PUT` | `/api/showtimes/{id}` | Updates showtime, returns `Showtime` entity |
+| `POST` | `/api/showtimes` | Creates showtime, returns `ShowtimeSummaryResponse` |
+| `PUT` | `/api/showtimes/{id}` | Updates showtime, returns `ShowtimeSummaryResponse` |
 | `DELETE` | `/api/showtimes/{id}` | Deletes showtime |
-| `POST` | `/api/reservations` | Legacy direct reservation creation, returns `Reservation` entity |
-| `PUT` | `/api/reservations/{id}` | Legacy direct reservation update, returns `Reservation` entity |
+| `POST` | `/api/reservations` | Legacy direct reservation creation, returns `ReservationResponse` |
+| `PUT` | `/api/reservations/{id}` | Legacy direct reservation update, returns `ReservationResponse` |
 | `DELETE` | `/api/reservations/{id}` | Deletes reservation |
-| `GET` | `/api/users` | Authenticated, returns `User` entities |
-| `GET` | `/api/users/{id}` | Authenticated, returns `User` entity |
-| `POST` | `/api/users` | Authenticated, creates user |
-| `PUT` | `/api/users/{id}` | Authenticated, updates user |
+| `GET` | `/api/users` | Authenticated, returns safe user DTO list |
+| `GET` | `/api/users/{id}` | Authenticated, returns safe user DTO |
+| `POST` | `/api/users` | Authenticated, creates user and returns safe user DTO |
+| `PUT` | `/api/users/{id}` | Authenticated, updates user and returns safe user DTO |
 | `DELETE` | `/api/users/{id}` | Authenticated, deletes user |
 
 ## Enums Used In Responses
@@ -739,6 +740,6 @@ The frontend-facing contract should stay DTO-based:
 Current follow-up candidates:
 
 - move internal CRUD routes behind explicit admin authorization
-- replace remaining raw entity responses with admin DTOs or remove unused routes
+- move internal CRUD routes behind explicit admin authorization
 - add contract integration tests for every route in this document
 - verify Stripe webhook idempotency with duplicate event tests

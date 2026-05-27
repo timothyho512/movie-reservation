@@ -327,7 +327,7 @@ public class ReservationService {
         return principal.getUserId();
     }
 
-    private ReservationResponse toReservationResponse(Reservation reservation) {
+    public ReservationResponse toReservationResponse(Reservation reservation) {
         Showtime showtime = reservation.getShowtime();
         Movie movie = showtime.getMovie();
         Screen screen = showtime.getScreen();

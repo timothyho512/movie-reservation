@@ -4,7 +4,6 @@ import com.example.moviereservation.dto.MovieCardResponse;
 import com.example.moviereservation.dto.MovieDetailResponse;
 import com.example.moviereservation.dto.MovieRequest;
 import com.example.moviereservation.entity.Movie;
-import com.example.moviereservation.repository.MovieRepository;
 import com.example.moviereservation.service.MovieService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -33,16 +32,16 @@ public class MovieController {
 
     // POST /api/movies - Create new movie
     @PostMapping
-    public ResponseEntity<Movie> createMovie(@RequestBody MovieRequest request) {
+    public ResponseEntity<MovieDetailResponse> createMovie(@RequestBody MovieRequest request) {
         Movie savedMovie = movieService.createMovie(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(savedMovie);
+        return ResponseEntity.status(HttpStatus.CREATED).body(movieService.getMovieDetail(savedMovie.getId()));
     }
 
     // PUT /api/movies/{id} - Update movie
     @PutMapping("/{id}")
-    public ResponseEntity<Movie> updateMovie(@PathVariable Long id, @RequestBody MovieRequest request) {
+    public ResponseEntity<MovieDetailResponse> updateMovie(@PathVariable Long id, @RequestBody MovieRequest request) {
         Movie updatedMovie = movieService.updateMovie(id, request);
-        return ResponseEntity.ok(updatedMovie);
+        return ResponseEntity.ok(movieService.getMovieDetail(updatedMovie.getId()));
     }
 
     // DELETE /api/movies/{id} - Delete movie

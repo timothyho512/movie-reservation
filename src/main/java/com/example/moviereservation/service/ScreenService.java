@@ -2,6 +2,7 @@ package com.example.moviereservation.service;
 
 import com.example.moviereservation.Exception.ResourceNotFoundException;
 import com.example.moviereservation.dto.ScreenRequest;
+import com.example.moviereservation.dto.ScreenResponse;
 import com.example.moviereservation.entity.Screen;
 import com.example.moviereservation.entity.Theatre;
 import com.example.moviereservation.repository.ScreenRepository;
@@ -23,9 +24,19 @@ public class ScreenService {
         return screenRepository.findAll();
     }
 
+    public List<ScreenResponse> getScreenResponses() {
+        return screenRepository.findAll().stream()
+                .map(this::toScreenResponse)
+                .toList();
+    }
+
     public Screen getScreenById(Long id) {
         return screenRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Screen not found with id: " + id));
+    }
+
+    public ScreenResponse getScreenResponse(Long id) {
+        return toScreenResponse(getScreenById(id));
     }
 
     public Screen createScreen(ScreenRequest request) {
@@ -73,5 +84,23 @@ public class ScreenService {
     public void deleteScreen(Long id) {
         Screen screen = getScreenById(id);
         screenRepository.delete(screen);
+    }
+
+    public ScreenResponse toScreenResponse(Screen screen) {
+        Theatre theatre = screen.getTheatre();
+
+        return new ScreenResponse(
+                screen.getId(),
+                screen.getName(),
+                new ScreenResponse.TheatreSummary(
+                        theatre.getId(),
+                        theatre.getName(),
+                        theatre.getCity(),
+                        theatre.getCountry()
+                ),
+                screen.getTotalSeats(),
+                screen.getScreenType(),
+                screen.isActive()
+        );
     }
 }

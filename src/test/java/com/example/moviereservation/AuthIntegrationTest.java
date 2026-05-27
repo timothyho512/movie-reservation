@@ -225,6 +225,45 @@ public class AuthIntegrationTest {
     }
 
     @Test
+    void usersEndpointReturnsSafeUserDtos() throws Exception {
+        String registerRequest = """
+                {
+                  "firstName": "Jay",
+                  "lastName": "Doe",
+                  "email": "jay@example.com",
+                  "password": "password123",
+                  "phoneNumber": "07123456789"
+                }
+                """;
+
+        String registerResponse = mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(registerRequest))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode registerJson = objectMapper.readTree(registerResponse);
+        String token = registerJson.get("token").asText();
+        Long userId = registerJson.get("user").get("id").asLong();
+
+        mockMvc.perform(get("/api/users")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(userId))
+                .andExpect(jsonPath("$[0].email").value("jay@example.com"))
+                .andExpect(jsonPath("$[0].password").doesNotExist());
+
+        mockMvc.perform(get("/api/users/{id}", userId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(userId))
+                .andExpect(jsonPath("$.email").value("jay@example.com"))
+                .andExpect(jsonPath("$.password").doesNotExist());
+    }
+
+    @Test
     void meRejectsInvalidBearerToken() throws Exception {
         mockMvc.perform(get("/api/auth/me")
                         .header("Authorization", "Bearer invalid-token"))

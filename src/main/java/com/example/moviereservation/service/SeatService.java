@@ -2,6 +2,7 @@ package com.example.moviereservation.service;
 
 import com.example.moviereservation.Exception.ResourceNotFoundException;
 import com.example.moviereservation.dto.SeatRequest;
+import com.example.moviereservation.dto.SeatResponse;
 import com.example.moviereservation.entity.Screen;
 import com.example.moviereservation.entity.Seat;
 import com.example.moviereservation.repository.ScreenRepository;
@@ -23,9 +24,19 @@ public class SeatService {
         return seatRepository.findAll();
     }
 
+    public List<SeatResponse> getSeatResponses() {
+        return seatRepository.findAll().stream()
+                .map(this::toSeatResponse)
+                .toList();
+    }
+
     public Seat getSeatById(Long id) {
         return seatRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Seat not found with id: " + id));
+    }
+
+    public SeatResponse getSeatResponse(Long id) {
+        return toSeatResponse(getSeatById(id));
     }
 
     public Seat createSeat(SeatRequest request) {
@@ -73,5 +84,23 @@ public class SeatService {
     public void deleteSeat(Long id) {
         Seat seat = getSeatById(id);
         seatRepository.delete(seat);
+    }
+
+    public SeatResponse toSeatResponse(Seat seat) {
+        Screen screen = seat.getScreen();
+
+        return new SeatResponse(
+                seat.getId(),
+                new SeatResponse.ScreenSummary(
+                        screen.getId(),
+                        screen.getName(),
+                        screen.getScreenType()
+                ),
+                seat.getRowLabel(),
+                seat.getSeatNumber(),
+                seat.getSeatType(),
+                seat.getBasePrice(),
+                seat.isActive()
+        );
     }
 }
