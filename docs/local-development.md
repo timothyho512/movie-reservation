@@ -46,6 +46,25 @@ set +a
 
 The backend runs on `http://localhost:8080`.
 
+## Demo data
+
+When the backend starts with the `dev` profile, it seeds useful booking data if the demo customer does not already exist:
+
+```text
+Customer email: demo.customer@example.com
+Admin email: demo.admin@example.com
+Password: Password123!
+```
+
+The seed includes 3 movies, 2 theatres, 3 screens, 90 seats, and several upcoming showtimes. Seeded showtimes are generated relative to the current date so checkout can lock and book seats immediately.
+
+If your local database already has older demo data and you want a clean reseed:
+
+```sh
+docker compose down -v
+docker compose up -d db test-db
+```
+
 ## Start Stripe webhook forwarding
 
 In a separate terminal:

@@ -4,21 +4,28 @@ import com.example.moviereservation.entity.*;
 import com.example.moviereservation.repository.*;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Component
-@Profile("dev") // Only run this in the 'dev' profile
+@Profile("dev")
 public class DemoDataSeeder implements CommandLineRunner {
+    private static final String DEMO_CUSTOMER_EMAIL = "demo.customer@example.com";
+    private static final String DEMO_ADMIN_EMAIL = "demo.admin@example.com";
+    private static final String DEMO_PASSWORD = "Password123!";
+
     private final UserRepository userRepository;
     private final TheatreRepository theatreRepository;
     private final ScreenRepository screenRepository;
     private final SeatRepository seatRepository;
     private final MovieRepository movieRepository;
     private final ShowtimeRepository showtimeRepository;
+    private final PasswordEncoder passwordEncoder;
 
     public DemoDataSeeder(
             UserRepository userRepository,
@@ -26,7 +33,8 @@ public class DemoDataSeeder implements CommandLineRunner {
             ScreenRepository screenRepository,
             SeatRepository seatRepository,
             MovieRepository movieRepository,
-            ShowtimeRepository showtimeRepository
+            ShowtimeRepository showtimeRepository,
+            PasswordEncoder passwordEncoder
     ) {
         this.userRepository = userRepository;
         this.theatreRepository = theatreRepository;
@@ -34,47 +42,48 @@ public class DemoDataSeeder implements CommandLineRunner {
         this.seatRepository = seatRepository;
         this.movieRepository = movieRepository;
         this.showtimeRepository = showtimeRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Override
-    public void run(String... args) throws Exception {
-        if (userRepository.count() > 0
-                || theatreRepository.count() > 0
-                || movieRepository.count() > 0
-                || showtimeRepository.count() > 0) {
+    public void run(String... args) {
+        if (userRepository.findByEmail(DEMO_CUSTOMER_EMAIL).isPresent()) {
             return;
         }
 
-        // Create demo users
-        User customer = new User("Alice", "Customer", "alice@example.com", "password123", "07111111111");
+        User customer = new User(
+                "Demo",
+                "Customer",
+                DEMO_CUSTOMER_EMAIL,
+                passwordEncoder.encode(DEMO_PASSWORD),
+                "07900000001"
+        );
         customer.setRole(UserRole.CUSTOMER);
 
-        User admin = new User("Bob", "Admin", "bob@example.com", "password123", "07222222222");
+        User admin = new User(
+                "Demo",
+                "Admin",
+                DEMO_ADMIN_EMAIL,
+                passwordEncoder.encode(DEMO_PASSWORD),
+                "07900000002"
+        );
         admin.setRole(UserRole.ADMIN);
 
-        User manager = new User("Carol", "Manager", "carol@example.com", "password123", "07333333333");
-        manager.setRole(UserRole.MANAGER);
+        userRepository.saveAll(List.of(customer, admin));
 
-        User inactiveCustomer = new User("Dave", "Inactive", "dave@example.com", "password123", "07444444444");
-        inactiveCustomer.setRole(UserRole.CUSTOMER);
-        inactiveCustomer.setActive(false);
-
-        userRepository.saveAll(List.of(customer, admin, manager, inactiveCustomer));
-
-
-        // Create demo theaters
-        Theatre theatre1 = new Theatre(
-        "Odeon Leicester Square",
-        "24-26 Leicester Square",
-        "London",
-        "England",
-        "United Kingdom",
-        "WC2H 7JY"
+        Theatre odeon = new Theatre(
+                "Odeon Leicester Square",
+                "24-26 Leicester Square",
+                "London",
+                "England",
+                "United Kingdom",
+                "WC2H 7JY"
         );
-        theatre1.setTotalScreens(2);
-        theatre1.setTotalSeats(12);
+        odeon.setPhoneNumber("020 7734 1506");
+        odeon.setTotalScreens(2);
+        odeon.setTotalSeats(60);
 
-        Theatre theatre2 = new Theatre(
+        Theatre vue = new Theatre(
                 "Vue Manchester Printworks",
                 "Withy Grove",
                 "Manchester",
@@ -82,117 +91,74 @@ public class DemoDataSeeder implements CommandLineRunner {
                 "United Kingdom",
                 "M4 2BS"
         );
-        theatre2.setTotalScreens(2);
-        theatre2.setTotalSeats(10);
+        vue.setPhoneNumber("0345 308 4620");
+        vue.setTotalScreens(1);
+        vue.setTotalSeats(30);
 
-        Theatre theatre3 = new Theatre(
-                "Cineworld Glasgow Renfrew Street",
-                "Renfrew Street",
-                "Glasgow",
-                "Scotland",
-                "United Kingdom",
-                "G2 3BW"
-        );
-        theatre3.setTotalScreens(1);
-        theatre3.setTotalSeats(8);
-        theatre3.setActive(false);
+        theatreRepository.saveAll(List.of(odeon, vue));
 
-        theatreRepository.saveAll(List.of(theatre1, theatre2, theatre3));
+        Screen odeonScreenOne = new Screen("Screen 1", odeon, 30, ScreenType.STANDARD);
+        Screen odeonImax = new Screen("IMAX", odeon, 30, ScreenType.IMAX);
+        Screen vueVip = new Screen("VIP Screen", vue, 30, ScreenType.VIP);
 
+        screenRepository.saveAll(List.of(odeonScreenOne, odeonImax, vueVip));
 
-        // Create demo screen
-        Screen screen1 = new Screen("Screen 1", theatre1, 6, ScreenType.STANDARD);
-        Screen screen2 = new Screen("Screen 2", theatre1, 6, ScreenType.IMAX);
-        Screen screen3 = new Screen("Screen 1", theatre2, 5, ScreenType.THREE_D);
-        Screen screen4 = new Screen("Screen 2", theatre2, 5, ScreenType.VIP);
-        Screen screen5 = new Screen("Screen 1", theatre3, 8, ScreenType.DOLBY_ATMOS);
-        screen5.setActive(false);
+        seatRepository.saveAll(buildSeats(odeonScreenOne));
+        seatRepository.saveAll(buildSeats(odeonImax));
+        seatRepository.saveAll(buildSeats(vueVip));
 
-        screenRepository.saveAll(List.of(screen1, screen2, screen3, screen4, screen5));
-
-
-        // Create demo seats
-        List<Seat> seats1 = buildSeats(screen1, 6);
-        List<Seat> seats2 = buildSeats(screen2, 6);
-        List<Seat> seats3 = buildSeats(screen3, 5);
-        List<Seat> seats4 = buildSeats(screen4, 5);
-        List<Seat> seats5 = buildSeats(screen5, 8);
-        
-        seatRepository.saveAll(seats1);
-        seatRepository.saveAll(seats2);
-        seatRepository.saveAll(seats3);
-        seatRepository.saveAll(seats4);
-        seatRepository.saveAll(seats5);
-
-
-        // Create demo movie
         Movie movie1 = new Movie("Inception", "Christopher Nolan");
-        Movie movie2 = new Movie("Interstellar", "Christopher Nolan");
+        Movie movie2 = new Movie("Dune: Part Two", "Denis Villeneuve");
         Movie movie3 = new Movie("Spirited Away", "Hayao Miyazaki");
-        Movie movie4 = new Movie("The Grand Budapest Hotel", "Wes Anderson");
 
-        movieRepository.saveAll(List.of(movie1, movie2, movie3, movie4));
+        movieRepository.saveAll(List.of(movie1, movie2, movie3));
 
+        LocalDateTime now = LocalDateTime.now().withSecond(0).withNano(0);
 
-        // Create demo showtime
-        LocalDateTime now = LocalDateTime.now();
-
-        Showtime st1 = new Showtime(
-                movie1,
-                screen1,
-                now.plusDays(1).withHour(19).withMinute(0).withSecond(0).withNano(0),
-                now.plusDays(1).withHour(21).withMinute(30).withSecond(0).withNano(0),
-                new BigDecimal("14.00")
-        );
-
-        Showtime st2 = new Showtime(
-                movie2,
-                screen2,
-                now.plusDays(1).withHour(20).withMinute(0).withSecond(0).withNano(0),
-                now.plusDays(1).withHour(22).withMinute(45).withSecond(0).withNano(0),
-                new BigDecimal("16.00")
-        );
-
-        Showtime st3 = new Showtime(
-                movie3,
-                screen3,
-                now.minusMinutes(30),
-                now.plusHours(2),
-                new BigDecimal("13.50")
-        );
-        st3.setStatus(ShowtimeStatus.ONGOING);
-
-        Showtime st4 = new Showtime(
-                movie4,
-                screen4,
-                now.minusDays(1).withHour(18).withMinute(0).withSecond(0).withNano(0),
-                now.minusDays(1).withHour(20).withMinute(0).withSecond(0).withNano(0),
-                new BigDecimal("15.00")
-        );
-        st4.setStatus(ShowtimeStatus.COMPLETED);
-
-        Showtime st5 = new Showtime(
-                movie1,
-                screen1,
-                now.plusDays(2).withHour(17).withMinute(30).withSecond(0).withNano(0),
-                now.plusDays(2).withHour(20).withMinute(0).withSecond(0).withNano(0),
-                new BigDecimal("14.50")
-        );
-        st5.setStatus(ShowtimeStatus.CANCELLED);
-
-        showtimeRepository.saveAll(List.of(st1, st2, st3, st4, st5));
+        showtimeRepository.saveAll(List.of(
+                showtime(movie1, odeonScreenOne, now.plusDays(1).withHour(18).withMinute(30), 148, "14.00"),
+                showtime(movie1, vueVip, now.plusDays(2).withHour(20).withMinute(0), 148, "18.50"),
+                showtime(movie2, odeonImax, now.plusDays(1).withHour(20).withMinute(15), 166, "19.00"),
+                showtime(movie2, odeonImax, now.plusDays(3).withHour(17).withMinute(45), 166, "19.00"),
+                showtime(movie3, odeonScreenOne, now.plusDays(2).withHour(15).withMinute(0), 125, "12.50"),
+                showtime(movie3, vueVip, now.plusDays(4).withHour(19).withMinute(30), 125, "16.00")
+        ));
     }
 
-    // helper function to build seats for a screen
-    private List<Seat> buildSeats(Screen screen, int seatsPerRow) {
-        return List.of(
-                new Seat(screen, "A", 1, SeatType.REGULAR, new BigDecimal("12.50")),
-                new Seat(screen, "A", 2, SeatType.REGULAR, new BigDecimal("12.50")),
-                new Seat(screen, "A", 3, SeatType.REGULAR, new BigDecimal("12.50")),
-                new Seat(screen, "B", 1, SeatType.VIP, new BigDecimal("18.00")),
-                new Seat(screen, "B", 2, SeatType.VIP, new BigDecimal("18.00")),
-                new Seat(screen, "B", 3, SeatType.WHEELCHAIR, new BigDecimal("10.00"))
+    private Showtime showtime(Movie movie, Screen screen, LocalDateTime startTime, int durationMinutes, String basePrice) {
+        return new Showtime(
+                movie,
+                screen,
+                startTime,
+                startTime.plusMinutes(durationMinutes),
+                new BigDecimal(basePrice)
         );
     }
 
+    private List<Seat> buildSeats(Screen screen) {
+        List<Seat> seats = new ArrayList<>();
+
+        addRow(seats, screen, "A", SeatType.REGULAR, "12.50");
+        addRow(seats, screen, "B", SeatType.REGULAR, "12.50");
+        addRow(seats, screen, "C", SeatType.VIP, "18.00");
+        addRow(seats, screen, "D", SeatType.VIP, "18.00");
+        addAccessibleRow(seats, screen);
+
+        return seats;
+    }
+
+    private void addRow(List<Seat> seats, Screen screen, String rowLabel, SeatType seatType, String basePrice) {
+        for (int seatNumber = 1; seatNumber <= 6; seatNumber++) {
+            seats.add(new Seat(screen, rowLabel, seatNumber, seatType, new BigDecimal(basePrice)));
+        }
+    }
+
+    private void addAccessibleRow(List<Seat> seats, Screen screen) {
+        seats.add(new Seat(screen, "E", 1, SeatType.WHEELCHAIR, new BigDecimal("10.00")));
+        seats.add(new Seat(screen, "E", 2, SeatType.WHEELCHAIR, new BigDecimal("10.00")));
+        seats.add(new Seat(screen, "E", 3, SeatType.REGULAR, new BigDecimal("12.50")));
+        seats.add(new Seat(screen, "E", 4, SeatType.REGULAR, new BigDecimal("12.50")));
+        seats.add(new Seat(screen, "E", 5, SeatType.REGULAR, new BigDecimal("12.50")));
+        seats.add(new Seat(screen, "E", 6, SeatType.REGULAR, new BigDecimal("12.50")));
+    }
 }
