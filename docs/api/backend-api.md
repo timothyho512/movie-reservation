@@ -24,6 +24,10 @@ Date-time values are serialized as local ISO-8601 strings, for example:
 2026-04-20T18:30:00
 ```
 
+Clients should use structured fields such as `status`, `reservationId`, and
+`bookingReference` for control flow. The `message` field is human-readable and
+should not be used for branching logic.
+
 ## Error Shape
 
 Most application errors return this shape:
@@ -432,12 +436,12 @@ Success: `200 OK`
 
 ```json
 {
-  "checkoutReference": "CO1776170000000",
+  "checkoutReference": "chk_4b5f8c2e8f944d85a03d1d2f8a9e1b11",
   "stripeCheckoutSessionId": "cs_test_123",
   "checkoutUrl": "https://checkout.stripe.com/c/pay/cs_test_123",
   "status": "PENDING_PAYMENT",
   "expiresAt": "2026-04-20T18:15:00",
-  "message": "Stripe Checkout Session created"
+  "message": "Checkout session created successfully"
 }
 ```
 
@@ -467,11 +471,11 @@ Success: `200 OK`
 
 ```json
 {
-  "checkoutReference": "CO1776170000000",
+  "checkoutReference": "chk_4b5f8c2e8f944d85a03d1d2f8a9e1b11",
   "status": "FINALIZED",
   "reservationId": 42,
   "bookingReference": "BK1776170000000",
-  "message": "Checkout finalized"
+  "message": "Checkout session finalized successfully"
 }
 ```
 
@@ -518,7 +522,7 @@ Success: `200 OK`
 
 ```json
 {
-  "message": "Seat locks cancelled"
+  "message": "Locks cancelled successfully"
 }
 ```
 
@@ -553,7 +557,7 @@ Success: `200 OK`
   "paymentStatus": "PAID",
   "totalPrice": 25.00,
   "seatIds": [100, 101],
-  "message": "Checkout confirmed"
+  "message": "Reservation confirmed successfully"
 }
 ```
 
@@ -666,7 +670,7 @@ Success: `200 OK`
 {
   "reservationId": 42,
   "status": "CANCELLED",
-  "message": "Reservation cancelled"
+  "message": "Reservation cancelled successfully"
 }
 ```
 
