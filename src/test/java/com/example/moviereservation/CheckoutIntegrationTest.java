@@ -195,6 +195,71 @@ public class CheckoutIntegrationTest {
     }
 
     @Test
+    void guestLockRequiresGuestEmail() throws Exception {
+        mockMvc.perform(post("/checkout/lock")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "showtimeId": %d,
+                                "seatIds": [%d]
+                                }
+                                """.formatted(showtime.getId(), seat1.getId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Exactly one of authenticated user or guestEmail must be provided"));
+
+        assertThat(seatLockRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void lockRejectsDuplicateSeatIds() throws Exception {
+        mockMvc.perform(post("/checkout/lock")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "showtimeId": %d,
+                                "seatIds": [%d, %d],
+                                "guestEmail": "guest@example.com"
+                                }
+                                """.formatted(showtime.getId(), seat1.getId(), seat1.getId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Duplicate seat IDs are not allowed"));
+
+        assertThat(seatLockRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void lockRejectsSeatOutsideShowtimeScreen() throws Exception {
+        Screen otherScreen = screenRepository.save(new Screen(
+                "Screen 2",
+                showtime.getScreen().getTheatre(),
+                20,
+                ScreenType.IMAX
+        ));
+        Seat otherScreenSeat = seatRepository.save(new Seat(
+                otherScreen,
+                "B",
+                1,
+                SeatType.REGULAR,
+                new BigDecimal("15.00")
+        ));
+
+        mockMvc.perform(post("/checkout/lock")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "showtimeId": %d,
+                                "seatIds": [%d],
+                                "guestEmail": "guest@example.com"
+                                }
+                                """.formatted(showtime.getId(), otherScreenSeat.getId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message")
+                        .value("Seat " + otherScreenSeat.getId() + " does not belong to the specified showtime"));
+
+        assertThat(seatLockRepository.findAll()).isEmpty();
+    }
+
+    @Test
     void seatMapReturnsSeatMetadataAndAvailability() throws Exception {
         lockAsGuest("guest@example.com", seat1.getId());
 
@@ -780,6 +845,50 @@ public class CheckoutIntegrationTest {
         }
 
         @Test
+        void authenticatedUserCannotProvideGuestEmailOnReservationCancel() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk());
+
+                String confirmResponse = mockMvc.perform(post("/checkout/confirm")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "paymentMethodToken": "pm_success"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+
+                mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "guestEmail": "guest@example.com"
+                                        }
+                                        """))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.message").value("Guest email must not be provided for authenticated users"));
+        }
+
+        @Test
         void guestCancelFailsWithoutRequestBody() throws Exception {
                 String guestEmail = "guestcancel@example.com";
                 String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
@@ -1026,6 +1135,25 @@ public class CheckoutIntegrationTest {
         }
 
         @Test
+        void authenticatedUserCannotProvideGuestFieldsOnCancelLock() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/cancel")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "guest@example.com",
+                                        "sessionId": "guest-session-id"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.message").value("Guest email must not be provided for authenticated users"));
+        }
+
+        @Test
         void authenticatedUserCannotProvideGuestFieldsOnConfirm() throws Exception {
                 String token = loginAndGetToken("jay@example.com", "password");
 
@@ -1142,6 +1270,25 @@ public class CheckoutIntegrationTest {
                         
 
                 assertThat(reservationRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void authenticatedUserCannotProvideGuestFieldsOnCheckoutSession() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/session")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "guest@example.com",
+                                        "sessionId": "guest-session-id"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.message").value("Guest email must not be provided for authenticated users"));
         }
 
         @Test
@@ -1288,6 +1435,37 @@ public class CheckoutIntegrationTest {
                                 .param("sessionId", sessionId))
                         .andExpect(status().isConflict())
                         .andExpect(jsonPath("$.message").value("Checkout session does not belong to this guest"));
+        }
+
+        @Test
+        void authenticatedUserCannotReadGuestCheckoutSessionStatus() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String checkoutReference = objectMapper.readTree(createResponse).get("checkoutReference").asString();
+
+                mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference)
+                                .header("Authorization", "Bearer " + token)
+                                .param("guestEmail", guestEmail)
+                                .param("sessionId", sessionId))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message").value("Checkout session does not belong to this user"));
         }
 
         @Test
