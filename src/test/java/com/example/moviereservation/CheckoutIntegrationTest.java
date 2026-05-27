@@ -59,6 +59,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import static org.hamcrest.Matchers.startsWith;
@@ -260,6 +261,72 @@ public class CheckoutIntegrationTest {
     }
 
     @Test
+    void lockRejectsMoreThanTenSeats() throws Exception {
+        for (int seatNumber = 4; seatNumber <= 11; seatNumber++) {
+            seatRepository.save(new Seat(
+                    showtime.getScreen(),
+                    "A",
+                    seatNumber,
+                    SeatType.REGULAR,
+                    new BigDecimal("12.50")
+            ));
+        }
+
+        List<Long> seatIds = seatRepository.findAll().stream()
+                .map(Seat::getId)
+                .sorted()
+                .toList();
+
+        mockMvc.perform(post("/checkout/lock")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), seatIds, "guest@example.com")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Cannot lock more than 10 seats in a single transaction"));
+
+        assertThat(seatLockRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void guestLockRejectsInvalidEmailFormat() throws Exception {
+        mockMvc.perform(post("/checkout/lock")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "not-an-email")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Invalid email format"));
+
+        assertThat(seatLockRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void lockRejectsPastShowtime() throws Exception {
+        showtime.setStartTime(LocalDateTime.now().minusMinutes(10));
+        showtime.setEndTime(LocalDateTime.now().plusHours(2));
+        showtimeRepository.save(showtime);
+
+        mockMvc.perform(post("/checkout/lock")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Cannot lock seats for a showtime that has already started"));
+
+        assertThat(seatLockRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void lockRejectsCancelledShowtime() throws Exception {
+        showtime.setStatus(ShowtimeStatus.CANCELLED);
+        showtimeRepository.save(showtime);
+
+        mockMvc.perform(post("/checkout/lock")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Cannot lock seats for a showtime that is not upcoming"));
+
+        assertThat(seatLockRepository.findAll()).isEmpty();
+    }
+
+    @Test
     void seatMapReturnsSeatMetadataAndAvailability() throws Exception {
         lockAsGuest("guest@example.com", seat1.getId());
 
@@ -341,6 +408,258 @@ public class CheckoutIntegrationTest {
                 .andExpect(jsonPath("$.screens[0].name").value("Screen 1"))
                 .andExpect(jsonPath("$.screens[0].screenType").value("STANDARD"))
                 .andExpect(jsonPath("$.screens[0].active").value(true));
+    }
+
+    @Test
+    void adminCrudEndpointsReturnDtoShapes() throws Exception {
+        String movieCreateResponse = mockMvc.perform(post("/api/movies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "title": "Admin Movie",
+                                "director": "Admin Director"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNumber())
+                .andExpect(jsonPath("$.title").value("Admin Movie"))
+                .andExpect(jsonPath("$.director").value("Admin Director"))
+                .andExpect(jsonPath("$.showtimes").isArray())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long movieId = objectMapper.readTree(movieCreateResponse).get("id").asLong();
+
+        mockMvc.perform(put("/api/movies/{id}", movieId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "title": "Admin Movie Updated",
+                                "director": "Admin Director"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(movieId))
+                .andExpect(jsonPath("$.title").value("Admin Movie Updated"))
+                .andExpect(jsonPath("$.showtimes").isArray());
+
+        String theatreCreateResponse = mockMvc.perform(post("/api/theatres")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "name": "Admin Theatre",
+                                "address": "2 Admin Street",
+                                "city": "London",
+                                "state": "London",
+                                "country": "UK",
+                                "postalCode": "SW1A 2AA",
+                                "phoneNumber": "02000000001",
+                                "totalScreens": 2,
+                                "totalSeats": 80
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNumber())
+                .andExpect(jsonPath("$.name").value("Admin Theatre"))
+                .andExpect(jsonPath("$.screens").isArray())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long theatreId = objectMapper.readTree(theatreCreateResponse).get("id").asLong();
+
+        mockMvc.perform(put("/api/theatres/{id}", theatreId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "name": "Admin Theatre Updated",
+                                "address": "2 Admin Street",
+                                "city": "London",
+                                "state": "London",
+                                "country": "UK",
+                                "postalCode": "SW1A 2AA",
+                                "phoneNumber": "02000000001",
+                                "totalScreens": 2,
+                                "totalSeats": 80
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(theatreId))
+                .andExpect(jsonPath("$.name").value("Admin Theatre Updated"))
+                .andExpect(jsonPath("$.screens").isArray());
+
+        String screenCreateResponse = mockMvc.perform(post("/api/screens")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "name": "Admin Screen",
+                                "theatreId": %d,
+                                "totalSeats": 40,
+                                "screenType": "IMAX"
+                                }
+                                """.formatted(theatreId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNumber())
+                .andExpect(jsonPath("$.name").value("Admin Screen"))
+                .andExpect(jsonPath("$.theatre.id").value(theatreId))
+                .andExpect(jsonPath("$.theatre.name").value("Admin Theatre Updated"))
+                .andExpect(jsonPath("$.screenType").value("IMAX"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long screenId = objectMapper.readTree(screenCreateResponse).get("id").asLong();
+
+        mockMvc.perform(put("/api/screens/{id}", screenId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "name": "Admin Screen Updated",
+                                "theatreId": %d,
+                                "totalSeats": 40,
+                                "screenType": "DOLBY_ATMOS"
+                                }
+                                """.formatted(theatreId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(screenId))
+                .andExpect(jsonPath("$.name").value("Admin Screen Updated"))
+                .andExpect(jsonPath("$.theatre.id").value(theatreId))
+                .andExpect(jsonPath("$.screenType").value("DOLBY_ATMOS"));
+
+        String seatCreateResponse = mockMvc.perform(post("/api/seats")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "screenId": %d,
+                                "rowLabel": "B",
+                                "seatNumber": 1,
+                                "seatType": "VIP",
+                                "basePrice": 18.50
+                                }
+                                """.formatted(screenId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNumber())
+                .andExpect(jsonPath("$.screen.id").value(screenId))
+                .andExpect(jsonPath("$.screen.name").value("Admin Screen Updated"))
+                .andExpect(jsonPath("$.rowLabel").value("B"))
+                .andExpect(jsonPath("$.seatType").value("VIP"))
+                .andExpect(jsonPath("$.basePrice").value(18.50))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long seatId = objectMapper.readTree(seatCreateResponse).get("id").asLong();
+
+        mockMvc.perform(put("/api/seats/{id}", seatId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "screenId": %d,
+                                "rowLabel": "B",
+                                "seatNumber": 2,
+                                "seatType": "WHEELCHAIR",
+                                "basePrice": 10.00
+                                }
+                                """.formatted(screenId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(seatId))
+                .andExpect(jsonPath("$.screen.id").value(screenId))
+                .andExpect(jsonPath("$.seatNumber").value(2))
+                .andExpect(jsonPath("$.seatType").value("WHEELCHAIR"));
+
+        String showtimeCreateResponse = mockMvc.perform(post("/api/showtimes")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "movieId": %d,
+                                "screenId": %d,
+                                "startTime": "%s",
+                                "endTime": "%s",
+                                "basePrice": 18.50,
+                                "status": "UPCOMING"
+                                }
+                                """.formatted(
+                                movieId,
+                                screenId,
+                                LocalDateTime.now().plusDays(2),
+                                LocalDateTime.now().plusDays(2).plusHours(2)
+                        )))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNumber())
+                .andExpect(jsonPath("$.movie.id").value(movieId))
+                .andExpect(jsonPath("$.movie.title").value("Admin Movie Updated"))
+                .andExpect(jsonPath("$.theatre.id").value(theatreId))
+                .andExpect(jsonPath("$.screen.id").value(screenId))
+                .andExpect(jsonPath("$.basePrice").value(18.50))
+                .andExpect(jsonPath("$.status").value("UPCOMING"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long showtimeId = objectMapper.readTree(showtimeCreateResponse).get("id").asLong();
+
+        mockMvc.perform(put("/api/showtimes/{id}", showtimeId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "movieId": %d,
+                                "screenId": %d,
+                                "startTime": "%s",
+                                "endTime": "%s",
+                                "basePrice": 20.00,
+                                "status": "UPCOMING"
+                                }
+                                """.formatted(
+                                movieId,
+                                screenId,
+                                LocalDateTime.now().plusDays(3),
+                                LocalDateTime.now().plusDays(3).plusHours(2)
+                        )))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(showtimeId))
+                .andExpect(jsonPath("$.movie.id").value(movieId))
+                .andExpect(jsonPath("$.screen.id").value(screenId))
+                .andExpect(jsonPath("$.basePrice").value(20.00));
+
+        String reservationCreateResponse = mockMvc.perform(post("/api/reservations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "guestEmail": "admin-guest@example.com",
+                                "showtimeId": %d,
+                                "seatIds": [%d]
+                                }
+                                """.formatted(showtimeId, seatId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.reservationId").isNumber())
+                .andExpect(jsonPath("$.reservationReference").isString())
+                .andExpect(jsonPath("$.reservationStatus").value("CONFIRMED"))
+                .andExpect(jsonPath("$.paymentStatus").value("PAID"))
+                .andExpect(jsonPath("$.showtime.id").value(showtimeId))
+                .andExpect(jsonPath("$.movie.id").value(movieId))
+                .andExpect(jsonPath("$.screen.id").value(screenId))
+                .andExpect(jsonPath("$.seats[0].id").value(seatId))
+                .andExpect(jsonPath("$.currency").value("GBP"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long reservationId = objectMapper.readTree(reservationCreateResponse).get("reservationId").asLong();
+
+        mockMvc.perform(put("/api/reservations/{id}", reservationId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "status": "COMPLETED",
+                                "paymentStatus": "REFUNDED"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reservationId").value(reservationId))
+                .andExpect(jsonPath("$.reservationStatus").value("COMPLETED"))
+                .andExpect(jsonPath("$.paymentStatus").value("REFUNDED"))
+                .andExpect(jsonPath("$.seats[0].id").value(seatId));
     }
 
     @Test
