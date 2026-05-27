@@ -2,13 +2,14 @@ package com.example.moviereservation.repository;
 
 import com.example.moviereservation.entity.CheckoutSession;
 import com.example.moviereservation.entity.CheckoutSessionStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
-import com.example.moviereservation.entity.CheckoutSessionStatus;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -18,6 +19,16 @@ public interface CheckoutSessionRepository extends JpaRepository<CheckoutSession
     Optional<CheckoutSession> findByCheckoutReference(String checkoutReference);
 
     Optional<CheckoutSession> findByStripeCheckoutSessionId(String stripeCheckoutSessionId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT cs
+            FROM CheckoutSession cs
+            WHERE cs.stripeCheckoutSessionId = :stripeCheckoutSessionId
+    """)
+    Optional<CheckoutSession> findByStripeCheckoutSessionIdForUpdate(
+            @Param("stripeCheckoutSessionId") String stripeCheckoutSessionId
+    );
 
     Optional<CheckoutSession> findFirstByUserIdAndShowtimeIdAndItemsSnapshotJsonAndStatusAndExpiresAtAfter(
             Long userId,

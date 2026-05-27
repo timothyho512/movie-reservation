@@ -501,7 +501,7 @@ public class CheckoutSessionService {
 
     private void finalizePaidCheckoutSession(StripeCheckoutCompletedEvent completedEvent) {
         CheckoutSession checkoutSession = checkoutSessionRepository
-                .findByStripeCheckoutSessionId(completedEvent.getStripeCheckoutSessionId())
+                .findByStripeCheckoutSessionIdForUpdate(completedEvent.getStripeCheckoutSessionId())
                 .orElse(null);
 
         if (checkoutSession == null) {
@@ -531,14 +531,14 @@ public class CheckoutSessionService {
 
             validateLocksStillActiveForFinalization(checkoutSession, seats);
 
+            convertLocksToReservation(checkoutSession, seats);
+
             Reservation reservation = reservationService.createPaidReservation(
                     checkoutSession.getUser(),
                     checkoutSession.getGuestEmail(),
                     checkoutSession.getShowtime(),
                     seats
             );
-
-            convertLocksToReservation(checkoutSession, seats);
 
             checkoutSession.setReservation(reservation);
             checkoutSession.setStripePaymentIntentId(completedEvent.getStripePaymentIntentId());
@@ -615,7 +615,7 @@ public class CheckoutSessionService {
 
     private void expireCheckoutSession(StripeCheckoutExpiredEvent expiredEvent) {
         CheckoutSession checkoutSession = checkoutSessionRepository
-                .findByStripeCheckoutSessionId(expiredEvent.getStripeCheckoutSessionId())
+                .findByStripeCheckoutSessionIdForUpdate(expiredEvent.getStripeCheckoutSessionId())
                 .orElse(null);
 
         if (checkoutSession == null) {

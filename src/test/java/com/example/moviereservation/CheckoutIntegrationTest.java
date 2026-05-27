@@ -1991,6 +1991,41 @@ public class CheckoutIntegrationTest {
         }
 
         @Test
+        void stripeCompletedWebhookForUnknownCheckoutSessionReturnsOkWithoutReservation() throws Exception {
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                "cs_test_unknown",
+                                "pi_test_unknown"
+                        ));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                assertThat(checkoutSessionRepository.findAll()).isEmpty();
+                assertThat(reservationRepository.findAll()).isEmpty();
+                assertThat(seatLockRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void stripeWebhookInvalidPayloadReturnsBadRequest() throws Exception {
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenThrow(new IllegalArgumentException("Invalid Stripe webhook payload"));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "bad-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.message").value("Invalid Stripe webhook payload"));
+
+                assertThat(checkoutSessionRepository.findAll()).isEmpty();
+                assertThat(reservationRepository.findAll()).isEmpty();
+        }
+
+        @Test
         void checkoutSessionStatusReturnsReservationAfterWebhookFinalization() throws Exception {
                 String guestEmail = "guest@example.com";
                 String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
@@ -2186,6 +2221,59 @@ public class CheckoutIntegrationTest {
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.seats[0].id").value(seat1.getId()))
                         .andExpect(jsonPath("$.seats[0].available").value(true));
+        }
+
+        @Test
+        void stripeExpiredWebhookDuplicateIsIdempotent() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(null);
+                when(stripeCheckoutService.parseCheckoutExpiredEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutExpiredEvent(stripeCheckoutSessionId));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.EXPIRED);
+                assertThat(checkoutSession.getReservation()).isNull();
+                assertThat(reservationRepository.findAll()).isEmpty();
+
+                assertThat(seatLockRepository.findAll())
+                        .filteredOn(lock -> lock.getSeat().getId().equals(seat1.getId()))
+                        .singleElement()
+                        .extracting(SeatLock::getStatus)
+                        .isEqualTo(LockStatus.EXPIRED);
         }
 
         @Test
