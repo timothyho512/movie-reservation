@@ -3,9 +3,9 @@ services:
     image: postgres:16
     container_name: movie-reservation-db
     environment:
-      POSTGRES_USER: ${SPRING_DATASOURCE_USERNAME}
-      POSTGRES_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
-      POSTGRES_DB: ${SPRING_DATASOURCE_DB}
+      POSTGRES_USER: ${SPRING_DATASOURCE_USERNAME:-movie_reservation_user}
+      POSTGRES_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-movie_reservation_pass}
+      POSTGRES_DB: ${SPRING_DATASOURCE_DB:-movie_reservation_db}
     ports:
       - "5433:5432"
     volumes:
