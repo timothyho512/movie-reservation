@@ -31,7 +31,7 @@ export default function SeatsPage({
   const { id } = use(params);
   const showtimeId = Number(id);
   const router = useRouter();
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, clearUser } = useAuth();
 
   const {
     selectedSeatIds,
@@ -99,9 +99,13 @@ export default function SeatsPage({
       setLock(response.sessionId, response.expiresAt);
       toast.success("Seats held for 15 minutes!");
     } catch (e) {
-      const msg =
-        e instanceof ApiError ? e.message : "Failed to hold seats. Please try again.";
-      toast.error(msg);
+      if (isLoggedIn && e instanceof ApiError && (e.status === 401 || e.status === 400)) {
+        clearUser();
+        toast.error("Your session expired. Enter your email below to continue as guest, or log in.");
+      } else {
+        const msg = e instanceof ApiError ? e.message : "Failed to hold seats. Please try again.";
+        toast.error(msg);
+      }
     } finally {
       setIsLocking(false);
     }
@@ -119,9 +123,13 @@ export default function SeatsPage({
       // Full browser navigation to Stripe
       window.location.href = response.checkoutUrl;
     } catch (e) {
-      const msg =
-        e instanceof ApiError ? e.message : "Failed to start checkout. Please try again.";
-      toast.error(msg);
+      if (isLoggedIn && e instanceof ApiError && (e.status === 401 || e.status === 400)) {
+        clearUser();
+        toast.error("Your session expired. Enter your email below to continue as guest, or log in.");
+      } else {
+        const msg = e instanceof ApiError ? e.message : "Failed to start checkout. Please try again.";
+        toast.error(msg);
+      }
       setIsPaying(false);
     }
   }
@@ -198,7 +206,10 @@ export default function SeatsPage({
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                Your booking confirmation will be sent to this address.
+                Your booking confirmation will be sent to this address.{" "}
+                <a href="/login" className="underline hover:text-foreground">
+                  Log in instead
+                </a>
               </p>
             </div>
           )}

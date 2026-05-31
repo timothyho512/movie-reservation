@@ -13,8 +13,27 @@ export function PaymentPolling({
 }: {
   checkoutReference: string;
 }) {
-  const { data, isLoading } = useCheckoutPolling(checkoutReference);
+  const { data, isLoading, isTimedOut } = useCheckoutPolling(checkoutReference);
   const { isLoggedIn } = useAuth();
+
+  if (isTimedOut) {
+    return (
+      <div className="flex flex-col items-center text-center py-16 px-4 space-y-4">
+        <div className="rounded-full bg-muted p-5">
+          <Clock className="h-12 w-12 text-muted-foreground" />
+        </div>
+        <h1 className="text-2xl font-bold">Still processing…</h1>
+        <p className="text-muted-foreground max-w-sm">
+          We&apos;re still waiting for payment confirmation from our payment
+          provider. You&apos;ll receive a confirmation email once your booking
+          is finalised — no need to do anything else.
+        </p>
+        <Link href="/movies" className={cn(buttonVariants({ variant: "outline" }))}>
+          Browse Movies
+        </Link>
+      </div>
+    );
+  }
 
   if (isLoading || !data) {
     return (
