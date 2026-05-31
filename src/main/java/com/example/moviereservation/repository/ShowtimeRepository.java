@@ -9,4 +9,6 @@ public interface ShowtimeRepository extends JpaRepository<Showtime, Long> {
     List<Showtime> findAllByOrderByStartTimeAsc();
 
     List<Showtime> findAllByMovieIdOrderByStartTimeAsc(Long movieId);
+
+    List<Showtime> findAllByScreenId(Long screenId);
 }

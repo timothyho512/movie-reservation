@@ -39,7 +39,7 @@ public class SeatLock {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private LockStatus status;  // LOCKED, EXPIRED, CONVERTED_TO_RESERVATION
+    private LockStatus status;  // Audit/history status. Redis is the active hold authority.
 
 //    private Long reservationId;  // Link to reservation if converted
 
@@ -150,29 +150,9 @@ public class SeatLock {
     }
 }
 /**
- * Lesson Learn
- * - Normal unique indexes stop any duplicate. But here, you want to allow a duplicate if the old lock is expired.
- * - This index says: "You cannot have two rows for the same seat/showtime IF they are both currently "LOCKED"."
- * - If someone tries to insert a second lock for a seat that is already locked, the database will throw an error, preventing the double-booking at the hardware level.
- * The Collision: If the Database Shield (above) triggers, your Java code catches a DataIntegrityViolationException.
- * This is called partial unique index
+ * Redis is now the active source of truth for temporary seat holds.
+ *
+ * This entity is kept as an audit/history record so admins and developers can
+ * inspect lock attempts and their final state. It should not be used to decide
+ * whether a seat is currently available.
  */
-// IMPORTANT: need partial unique index ON seat_locks (seat_id, showtime_id)
-// WHERE status IN ('LOCKED', 'CONVERTED_TO_RESERVATION');
-
-// When user clicks checkout: Create SeatLock entries for the selected seats + showtime
-// If another user already locked it, the insert fails; catch the unique‑violation and return “seat
-// unavailable”.
-// Check availability: Query for non-expired locks AND confirmed reservations
-// Lock expiration: Set expiresAt to 10-15 minutes from lockedAt
-// On successful payment: Convert lock to Reservation, update SeatLock.status
-// Cleanup: Periodically remove expired locks (scheduled job or on-demand)
-/**
- * The "Garbage Collection" (Cleanup)
- * - Scheduled Job: A "Spring Cron" task that runs every minute: DELETE FROM seat_locks WHERE expiresAt < NOW() AND status = "LOCKED".
- * - On-Demand: Every time a user searches for seats, your first run a query to clear out any expired ones so those seats appear "available" again
- */
-
-//
- // If expired, then we update row as expired
- // and clean up if we want

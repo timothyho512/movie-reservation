@@ -33,6 +33,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -108,6 +109,9 @@ public class CheckoutIntegrationTest {
     @Autowired
     private SeatLockCleanupService seatLockCleanupService;
 
+    @Autowired
+    private StringRedisTemplate redisTemplate;
+
 
     @MockitoBean
     private StripeCheckoutService stripeCheckoutService; // Mock the StripeCheckoutService to avoid real API calls during tests
@@ -121,6 +125,7 @@ public class CheckoutIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        redisTemplate.getConnectionFactory().getConnection().serverCommands().flushDb();
         checkoutSessionRepository.deleteAll();
         reservationRepository.deleteAll();
         seatLockRepository.deleteAll();
@@ -2722,6 +2727,7 @@ public class CheckoutIntegrationTest {
                 seatLockRepository.save(lock);
 
                 seatLockCleanupService.expireTimedOutLocks();
+                redisTemplate.delete("seat-lock:showtime:" + showtime.getId() + ":seat:" + seat1.getId());
 
                 when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
                         .thenReturn(new StripeCheckoutCompletedEvent(

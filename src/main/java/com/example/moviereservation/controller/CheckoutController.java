@@ -80,17 +80,14 @@ public class CheckoutController {
 
     @GetMapping("session/{checkoutReference}")
     public ResponseEntity<CheckoutSessionStatusResponse> getCheckoutSessionStatus(
-            @PathVariable String checkoutReference,
-            @RequestParam(required = false) String guestEmail,
-            @RequestParam(required = false) String sessionId,
-            Authentication authentication
+            @PathVariable String checkoutReference
     ) {
         return ResponseEntity.ok(
                 checkoutSessionService.getCheckoutSessionStatus(
                         checkoutReference,
-                        guestEmail,
-                        sessionId,
-                        extractPrincipal(authentication)
+                        null,
+                        null,
+                        null
                 )
         );
     }

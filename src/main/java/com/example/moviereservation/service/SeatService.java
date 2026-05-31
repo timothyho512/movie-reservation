@@ -7,6 +7,7 @@ import com.example.moviereservation.entity.Screen;
 import com.example.moviereservation.entity.Seat;
 import com.example.moviereservation.repository.ScreenRepository;
 import com.example.moviereservation.repository.SeatRepository;
+import com.example.moviereservation.repository.ShowtimeRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -19,6 +20,12 @@ public class SeatService {
 
     @Autowired
     private ScreenRepository screenRepository;
+
+    @Autowired
+    private ShowtimeRepository showtimeRepository;
+
+    @Autowired
+    private RedisSeatMapCacheService redisSeatMapCacheService;
 
     public List<Seat> getAllSeats() {
         return seatRepository.findAll();
@@ -51,11 +58,14 @@ public class SeatService {
         seat.setBasePrice(request.getBasePrice());
         seat.setActive(true);
 
-        return seatRepository.save(seat);
+        Seat savedSeat = seatRepository.save(seat);
+        evictSeatMapsForScreen(savedSeat.getScreen().getId());
+        return savedSeat;
     }
 
     public Seat updateSeat(Long id, SeatRequest request) {
         Seat seat = getSeatById(id);
+        Long originalScreenId = seat.getScreen().getId();
 
         // Update screen if provided
         if (request.getScreenId() != null) {
@@ -78,12 +88,17 @@ public class SeatService {
             seat.setBasePrice(request.getBasePrice());
         }
 
-        return seatRepository.save(seat);
+        Seat savedSeat = seatRepository.save(seat);
+        evictSeatMapsForScreen(originalScreenId);
+        evictSeatMapsForScreen(savedSeat.getScreen().getId());
+        return savedSeat;
     }
 
     public void deleteSeat(Long id) {
         Seat seat = getSeatById(id);
+        Long screenId = seat.getScreen().getId();
         seatRepository.delete(seat);
+        evictSeatMapsForScreen(screenId);
     }
 
     public SeatResponse toSeatResponse(Seat seat) {
@@ -102,5 +117,10 @@ public class SeatService {
                 seat.getBasePrice(),
                 seat.isActive()
         );
+    }
+
+    private void evictSeatMapsForScreen(Long screenId) {
+        showtimeRepository.findAllByScreenId(screenId)
+                .forEach(showtime -> redisSeatMapCacheService.evict(showtime.getId()));
     }
 }

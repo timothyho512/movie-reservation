@@ -385,7 +385,7 @@ Guest requests:
 
 ### POST `/checkout/lock`
 
-Temporarily locks seats before payment.
+Temporarily locks seats in Redis before payment. Postgres `seat_locks` rows are kept as audit/history records only; Redis is the active hold authority.
 
 Auth: optional
 
@@ -416,6 +416,8 @@ Success: `200 OK`
 
 Creates a Stripe Checkout Session for the selected locked seats. This is the
 canonical real-payment entry point.
+
+All requested seats must still have active Redis holds owned by the caller.
 
 Auth: optional
 
@@ -497,13 +499,13 @@ Success: `200 OK` with empty body.
 
 Expected production behavior:
 
-- `checkout.session.completed` finalizes the checkout and creates the reservation
-- `checkout.session.expired` expires the checkout and releases locks
+- `checkout.session.completed` finalizes the checkout, creates the reservation, and releases Redis holds
+- `checkout.session.expired` expires the checkout and releases Redis holds
 - duplicate webhooks should not create duplicate reservations
 
 ### POST `/checkout/cancel`
 
-Cancels active seat locks before reservation creation.
+Cancels active Redis seat holds before reservation creation.
 
 Auth: optional
 

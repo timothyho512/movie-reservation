@@ -8,11 +8,14 @@ import org.springframework.transaction.annotation.Transactional;
 import com.example.moviereservation.dto.CheckoutLockRequest;
 import com.example.moviereservation.dto.CheckoutLockResponse;
 import com.example.moviereservation.entity.Seat;
+import com.example.moviereservation.entity.SeatLock;
 import com.example.moviereservation.entity.Showtime;
 import com.example.moviereservation.entity.ShowtimeStatus;
-import com.example.moviereservation.entity.SeatLock;
 import com.example.moviereservation.entity.User;
 import com.example.moviereservation.entity.Reservation;
+import com.example.moviereservation.service.RedisSeatLockService.RedisSeatLockBatch;
+import com.example.moviereservation.service.RedisSeatLockService.RedisSeatLockOwner;
+import com.example.moviereservation.service.RedisSeatLockService.RedisSeatLockValue;
 import com.example.moviereservation.repository.UserRepository;
 import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
@@ -31,7 +34,6 @@ import com.example.moviereservation.security.CustomUserPrincipal;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
 
 
 @Service
@@ -51,8 +53,12 @@ public class CheckoutService {
 
     private final CheckoutSessionRepository checkoutSessionRepository;
 
+    private final RedisSeatLockService redisSeatLockService;
 
-    public CheckoutService(ShowtimeRepository showtimeRepository, SeatRepository seatRepository, ReservationRepository reservationRepository, SeatLockRepository seatLockRepository, UserRepository userRepository, ReservationService reservationService, StripeCheckoutService stripeCheckoutService, CheckoutSessionRepository checkoutSessionRepository) {
+    private final RedisSeatMapCacheService redisSeatMapCacheService;
+
+
+    public CheckoutService(ShowtimeRepository showtimeRepository, SeatRepository seatRepository, ReservationRepository reservationRepository, SeatLockRepository seatLockRepository, UserRepository userRepository, ReservationService reservationService, StripeCheckoutService stripeCheckoutService, CheckoutSessionRepository checkoutSessionRepository, RedisSeatLockService redisSeatLockService, RedisSeatMapCacheService redisSeatMapCacheService) {
         this.showtimeRepository = showtimeRepository;
         this.seatRepository = seatRepository;
         this.reservationRepository = reservationRepository;
@@ -60,6 +66,8 @@ public class CheckoutService {
         this.userRepository = userRepository;
         this.reservationService = reservationService;
         this.checkoutSessionRepository = checkoutSessionRepository;
+        this.redisSeatLockService = redisSeatLockService;
+        this.redisSeatMapCacheService = redisSeatMapCacheService;
     }
 
     // the whole thing needs to be transactional
@@ -78,16 +86,13 @@ public class CheckoutService {
         // Check if seats are available for the showtime
         validateSeatsAvailable(context.getShowtime(), context.getSeats());
 
-        // If available, create a temporary lock (e.g., in-memory or Redis) with an expiration time (e.g., 15 minutes)
-        try {
-            List<SeatLock> seatLocks = createLock(context.getUser(), guestEmail, context.getShowtime(), context.getSeats());
+        RedisSeatLockOwner owner = buildRedisOwnerForLock(context.getUser(), guestEmail);
+        RedisSeatLockBatch lockBatch = createLock(context.getShowtime(), context.getSeats(), owner);
+        createAuditLocks(context.getUser(), guestEmail, context.getShowtime(), context.getSeats(), lockBatch);
+        redisSeatMapCacheService.evict(context.getShowtime().getId());
 
-            // Return lock details (sessionId, expiresAt, lockedSeatIds) to the client
-            return buildLockResponse(seatLocks);
-        } catch (DataIntegrityViolationException e) {
-            // If not available, return an error response indicating which seats are unavailable
-            throw new SeatUnavailableException("One or more seats are no longer available");
-        }
+        // Return lock details (sessionId, expiresAt, lockedSeatIds) to the client
+        return buildLockResponse(lockBatch);
     }
 
     @Transactional
@@ -102,17 +107,18 @@ public class CheckoutService {
 
         String sessionId = principal != null ? null : request.getSessionId();
         String guestEmail = principal != null ? null : request.getGuestEmail();
+        RedisSeatLockOwner owner = buildRedisOwnerForExistingLock(context.getUser(), sessionId, guestEmail);
 
-        // change row status to "processing" to prevent other concurrent requests from using the same lock
-        markLocksAsProcessing(context.getShowtime(), context.getSeats(), context.getUser(), sessionId, guestEmail);
+        validateLocksOwned(context.getShowtime(), context.getSeats(), owner);
 
         // If valid, create a reservation in the database
         try {
             processPayment(request.getPaymentMethodToken());
             Reservation reservation = createReservation(context.getUser(), guestEmail, context.getShowtime(), context.getSeats());
 
-            // Update the lock status to "converted to reservation"
             updateLockStatusToConverted(context.getShowtime(), context.getSeats(), context.getUser(), sessionId, guestEmail);
+            releaseLocks(context.getShowtime(), context.getSeats(), owner);
+            redisSeatMapCacheService.evict(context.getShowtime().getId());
 
             return buildConfirmResponse(reservation);
         } catch (DataIntegrityViolationException e) {
@@ -131,9 +137,12 @@ public class CheckoutService {
 
         String sessionId = principal != null ? null : request.getSessionId();
         String guestEmail = principal != null ? null : request.getGuestEmail();
+        RedisSeatLockOwner owner = buildRedisOwnerForExistingLock(context.getUser(), sessionId, guestEmail);
 
-        cancelLocks(context.getShowtime(), context.getSeats(), context.getUser(), sessionId, guestEmail);
+        cancelLocks(context.getShowtime(), context.getSeats(), owner);
+        expireAuditLocks(context.getShowtime(), context.getSeats(), context.getUser(), sessionId, guestEmail);
         cancelPendingCheckoutSessions(context.getShowtime(), context.getUser(), sessionId, guestEmail);
+        redisSeatMapCacheService.evict(context.getShowtime().getId());
 
         return buildCancelResponse("Locks cancelled successfully");
 
@@ -244,7 +253,7 @@ public class CheckoutService {
                 throw new SeatUnavailableException("Seat " + seat.getId() + " is already reserved for this showtime");
             }
             // check if it is locked by another user
-            boolean isLocked = seatLockRepository.existsLockedSeatForShowtime(showtime.getId(), seat.getId());
+            boolean isLocked = redisSeatLockService.findLockedSeatIdsForShowtime(showtime.getId()).contains(seat.getId());
             if (isLocked) {
                 throw new SeatUnavailableException("Seat " + seat.getId() + " is currently locked by another user for this showtime");
             }
@@ -288,68 +297,63 @@ public class CheckoutService {
         validateSeatsBelongToShowtime(showtime, seats);
     }
 
-    private void markLocksAsProcessing(Showtime showtime, List<Seat> seats, User user, String sessionId, String guestEmail) {
-        for (Seat seat : seats) {
-            int updatedRows;
+    private void validateLocksOwned(Showtime showtime, List<Seat> seats, RedisSeatLockOwner owner) {
+        List<Long> requestedSeatIds = seats.stream().map(Seat::getId).sorted().toList();
+        List<Long> ownedSeatIds = redisSeatLockService.findOwnedLocks(showtime.getId(), requestedSeatIds, owner).stream()
+                .map(RedisSeatLockValue::seatId)
+                .sorted()
+                .toList();
 
-            if (user != null) {
-                updatedRows = seatLockRepository.markLockAsProcessingForUser(showtime.getId(), seat.getId(), user.getId());
-            } else {
-                updatedRows = seatLockRepository.markLockAsProcessingForSession(showtime.getId(), seat.getId(), sessionId, guestEmail);
-            }
-
-            if (updatedRows == 0) {
-                // initially message: "Seat 1 is no longer available for confirmation"
-                throw new SeatUnavailableException("No valid active lock found for seat " + seat.getId() + " for this confirmation request");
-            }
+        if (!ownedSeatIds.equals(requestedSeatIds)) {
+            Long unavailableSeatId = requestedSeatIds.stream()
+                    .filter(seatId -> !ownedSeatIds.contains(seatId))
+                    .findFirst()
+                    .orElse(requestedSeatIds.getFirst());
+            throw new SeatUnavailableException("No valid active lock found for seat " + unavailableSeatId + " for this confirmation request");
         }
     }
 
-    private void cancelLocks(Showtime showtime, List<Seat> seats, User user, String sessionId, String guestEmail) {
-        for (Seat seat : seats) {
-            int cancelledRows;
-            cancelledRows = seatLockRepository.cancelActiveLock(
-                    showtime.getId(),
-                    seat.getId(),
-                    user != null ? user.getId() : null,
-                    sessionId,
-                    guestEmail
-            );
-
-            if (cancelledRows == 0) {
-                throw new SeatUnavailableException("No valid active lock found for seat " + seat.getId() + " for this cancellation request");
-            }
+    private void cancelLocks(Showtime showtime, List<Seat> seats, RedisSeatLockOwner owner) {
+        int releasedLocks = releaseLocks(showtime, seats, owner);
+        if (releasedLocks != seats.size()) {
+            throw new SeatUnavailableException("No valid active lock found for this cancellation request");
         }
     }
 
-    private List<SeatLock> createLock(User user, String guestEmail, Showtime showtime, List<Seat> seats) {
-        // Create a lock entry in the database or in-memory store with details about the locked seats, showtime, user/session, and expiration time
+    private RedisSeatLockBatch createLock(Showtime showtime, List<Seat> seats, RedisSeatLockOwner owner) {
+        return redisSeatLockService.createLocks(showtime.getId(), seats.stream().map(Seat::getId).toList(), owner);
+    }
 
-        // create sessionId for guest user
-        final String sessionId = (guestEmail != null && !guestEmail.isBlank())
-        ? UUID.randomUUID().toString()
-        : null;
-
-        // save a list of responses for each seat locked, and return the list of locked seatIds in the response
+    private void createAuditLocks(
+            User user,
+            String guestEmail,
+            Showtime showtime,
+            List<Seat> seats,
+            RedisSeatLockBatch lockBatch
+    ) {
         List<SeatLock> locks = seats.stream()
-            .map(seat -> {
-                SeatLock seatLock = new SeatLock();
-                seatLock.setShowtime(showtime);
-                seatLock.setSeat(seat);
+                .map(seat -> {
+                    SeatLock seatLock = new SeatLock();
+                    seatLock.setShowtime(showtime);
+                    seatLock.setSeat(seat);
+                    seatLock.setExpiresAt(lockBatch.expiresAt());
 
-                if (user != null) {
-                    seatLock.setUser(user);
-                } else {
-                    seatLock.setSessionId(sessionId);
-                    seatLock.setGuestEmail(guestEmail);
-                }
+                    if (user != null) {
+                        seatLock.setUser(user);
+                    } else {
+                        seatLock.setSessionId(lockBatch.sessionId());
+                        seatLock.setGuestEmail(guestEmail);
+                    }
 
-                return seatLock;
-            })
-            .toList();
-        
-        // if one insert fails, the whole transaction (batch) should rolled back
-        return seatLockRepository.saveAll(locks);
+                    return seatLock;
+                })
+                .toList();
+
+        try {
+            seatLockRepository.saveAll(locks);
+        } catch (DataIntegrityViolationException ignored) {
+            // Redis is the active lock authority. Postgres rows are kept as legacy audit only.
+        }
     }
 
     private Reservation createReservation(User user, String guestEmail, Showtime showtime, List<Seat> seats) {
@@ -357,24 +361,53 @@ public class CheckoutService {
         return reservation;
     }
 
+    private int releaseLocks(Showtime showtime, List<Seat> seats, RedisSeatLockOwner owner) {
+        return redisSeatLockService.releaseLocks(showtime.getId(), seats.stream().map(Seat::getId).toList(), owner);
+    }
+
     private void updateLockStatusToConverted(Showtime showtime, List<Seat> seats, User user, String sessionId, String guestEmail) {
         for (Seat seat : seats) {
-            int updatedRows;
-            updatedRows = seatLockRepository.markLockAsConverted(showtime.getId(), seat.getId(), user != null ? user.getId() : null, sessionId, guestEmail);
-            if (updatedRows == 0) {
-                throw new SeatUnavailableException("Seat " + seat.getId() + " could not be finalized for reservation");
-            }
+            seatLockRepository.markActiveLockAsConverted(
+                    showtime.getId(),
+                    seat.getId(),
+                    user != null ? user.getId() : null,
+                    sessionId,
+                    guestEmail
+            );
+        }
+    }
+
+    private void expireAuditLocks(Showtime showtime, List<Seat> seats, User user, String sessionId, String guestEmail) {
+        for (Seat seat : seats) {
+            seatLockRepository.cancelActiveLock(
+                    showtime.getId(),
+                    seat.getId(),
+                    user != null ? user.getId() : null,
+                    sessionId,
+                    guestEmail
+            );
         }
     }
 
     // helper function
-    private CheckoutLockResponse buildLockResponse(List<SeatLock> seatLocks) {
-        String sessionId = seatLocks.getFirst().getSessionId();
-        LocalDateTime expiresAt = seatLocks.getFirst().getExpiresAt();
-        List<Long> lockedSeatIds = seatLocks.stream()
-                .map(lock -> lock.getSeat().getId())
-                .toList();
-        return new CheckoutLockResponse(sessionId, expiresAt, lockedSeatIds, "Seats locked successfully");
+    private CheckoutLockResponse buildLockResponse(RedisSeatLockBatch lockBatch) {
+        return new CheckoutLockResponse(lockBatch.sessionId(), lockBatch.expiresAt(), lockBatch.lockedSeatIds(), "Seats locked successfully");
+    }
+
+    private RedisSeatLockOwner buildRedisOwnerForLock(User user, String guestEmail) {
+        if (user != null) {
+            return redisSeatLockService.authenticatedOwner(user.getId());
+        }
+
+        return redisSeatLockService.guestOwner(guestEmail);
+    }
+
+    private RedisSeatLockOwner buildRedisOwnerForExistingLock(User user, String sessionId, String guestEmail) {
+        if (user != null) {
+            return redisSeatLockService.authenticatedOwner(user.getId());
+        }
+
+        return redisSeatLockService.guestOwner(sessionId, guestEmail);
     }
 
     private CheckoutConfirmResponse buildConfirmResponse(Reservation reservation) {

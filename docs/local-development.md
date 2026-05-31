@@ -1,6 +1,6 @@
 # Local Development
 
-This project runs the backend against local Postgres containers and uses Stripe CLI for local webhook delivery.
+This project runs the backend against local Postgres and Redis containers and uses Stripe CLI for local webhook delivery.
 
 ## First-time setup
 
@@ -23,15 +23,17 @@ STRIPE_WEBHOOK_SECRET=whsec_replace_me
 
 `STRIPE_SECRET_KEY` comes from the Stripe Dashboard. `STRIPE_WEBHOOK_SECRET` comes from the Stripe CLI command in the webhook section below.
 
-## Start local databases
+## Start local services
 
 Docker Compose automatically reads `.env` for variable substitution.
 
 ```sh
-docker compose up -d db test-db
+docker compose up -d db test-db redis
 ```
 
-The main development database is available at `localhost:5433`. The test database is available at `localhost:5434`.
+The main development database is available at `localhost:5433`. The test database is available at `localhost:5434`. Redis is available at `localhost:6379`.
+
+Redis stores active temporary seat holds and short-lived seat-map cache entries. Postgres remains the source of truth for confirmed reservations, checkout sessions, and audit/history rows.
 
 ## Start the backend
 
@@ -62,7 +64,7 @@ If your local database already has older demo data and you want a clean reseed:
 
 ```sh
 docker compose down -v
-docker compose up -d db test-db
+docker compose up -d db test-db redis
 ```
 
 ## Start Stripe webhook forwarding
@@ -80,7 +82,7 @@ The `whsec_...` value is tied to the active Stripe CLI listener. If the CLI prin
 
 ## Run backend tests
 
-Keep `test-db` running, then run:
+Keep `test-db` and `redis` running, then run:
 
 ```sh
 ./gradlew test

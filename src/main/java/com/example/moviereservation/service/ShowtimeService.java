@@ -12,7 +12,6 @@ import com.example.moviereservation.repository.ScreenRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ReservationRepository;
-import com.example.moviereservation.repository.SeatLockRepository;
 import com.example.moviereservation.dto.GetAvailabilityResponse;
 import com.example.moviereservation.dto.SeatAvailabilityDto;
 import com.example.moviereservation.dto.SeatMapResponse;
@@ -44,7 +43,10 @@ public class ShowtimeService {
     private ReservationRepository reservationRepository;
 
     @Autowired
-    private SeatLockRepository seatLockRepository;
+    private RedisSeatLockService redisSeatLockService;
+
+    @Autowired
+    private RedisSeatMapCacheService redisSeatMapCacheService;
 
     public List<Showtime> getAllShowtimes() {
         return showtimeRepository.findAll();
@@ -85,7 +87,9 @@ public class ShowtimeService {
         showtime.setAvailableSeats(screen.getTotalSeats());
         showtime.setStatus(request.getStatus() != null ? request.getStatus() : ShowtimeStatus.UPCOMING);
 
-        return showtimeRepository.save(showtime);
+        Showtime savedShowtime = showtimeRepository.save(showtime);
+        redisSeatMapCacheService.evict(savedShowtime.getId());
+        return savedShowtime;
     }
 
     public Showtime updateShowtime(Long id, ShowtimeRequest request) {
@@ -120,12 +124,15 @@ public class ShowtimeService {
             showtime.setStatus(request.getStatus());
         }
 
-        return showtimeRepository.save(showtime);
+        Showtime savedShowtime = showtimeRepository.save(showtime);
+        redisSeatMapCacheService.evict(savedShowtime.getId());
+        return savedShowtime;
     }
 
     public void deleteShowtime(Long id) {
         Showtime showtime = getShowtimeById(id);
         showtimeRepository.delete(showtime);
+        redisSeatMapCacheService.evict(id);
     }
 
     public GetAvailabilityResponse checkAvailability(Long showtimeId) {
@@ -143,13 +150,18 @@ public class ShowtimeService {
     }
 
     public SeatMapResponse getSeatMap(Long showtimeId) {
+        return redisSeatMapCacheService.get(showtimeId)
+                .orElseGet(() -> buildAndCacheSeatMap(showtimeId));
+    }
+
+    private SeatMapResponse buildAndCacheSeatMap(Long showtimeId) {
         Showtime showtime = loadShowtimeById(showtimeId);
         Screen screen = showtime.getScreen();
         Movie movie = showtime.getMovie();
         List<Seat> seats = getSeatsForScreenId(screen.getId());
 
         Set<Long> reservedSeatIds = new HashSet<>(reservationRepository.findReservedSeatIdsForShowtime(showtimeId));
-        Set<Long> lockedSeatIds = new HashSet<>(seatLockRepository.findUnavailableLockedSeatIdsForShowtime(showtimeId));
+        Set<Long> lockedSeatIds = new HashSet<>(redisSeatLockService.findLockedSeatIdsForShowtime(showtimeId));
 
         List<SeatMapResponse.SeatSummary> seatSummaries = seats.stream()
                 .sorted(Comparator
@@ -166,7 +178,7 @@ public class ShowtimeService {
                 ))
                 .toList();
 
-        return new SeatMapResponse(
+        SeatMapResponse seatMap = new SeatMapResponse(
                 showtime.getId(),
                 showtime.getStatus(),
                 showtime.getStartTime(),
@@ -183,6 +195,9 @@ public class ShowtimeService {
                 ),
                 seatSummaries
         );
+
+        redisSeatMapCacheService.put(showtimeId, seatMap);
+        return seatMap;
     }
 
     private Showtime loadShowtimeById(Long showtimeId) {
@@ -196,7 +211,7 @@ public class ShowtimeService {
 
     private GetAvailabilityResponse getSeatsAvailability(Long showtimeId, List<Seat> seats) {
         Set<Long> reservedSeatIds = new HashSet<>(reservationRepository.findReservedSeatIdsForShowtime(showtimeId));
-        Set<Long> lockedSeatIds = new HashSet<>(seatLockRepository.findUnavailableLockedSeatIdsForShowtime(showtimeId));
+        Set<Long> lockedSeatIds = new HashSet<>(redisSeatLockService.findLockedSeatIdsForShowtime(showtimeId));
         List<SeatAvailabilityDto> availability = seats.stream()
             .map(seat -> {
                 boolean available = !reservedSeatIds.contains(seat.getId())

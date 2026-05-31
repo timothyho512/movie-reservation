@@ -12,7 +12,6 @@ import com.example.moviereservation.entity.CheckoutSession;
 import com.example.moviereservation.entity.CheckoutSessionStatus;
 import com.example.moviereservation.entity.CurrencyCode;
 import com.example.moviereservation.entity.Seat;
-import com.example.moviereservation.entity.SeatLock;
 import com.example.moviereservation.entity.Showtime;
 import com.example.moviereservation.entity.ShowtimeStatus;
 import com.example.moviereservation.entity.User;
@@ -23,6 +22,8 @@ import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.repository.UserRepository;
 import com.example.moviereservation.security.CustomUserPrincipal;
+import com.example.moviereservation.service.RedisSeatLockService.RedisSeatLockOwner;
+import com.example.moviereservation.service.RedisSeatLockService.RedisSeatLockValue;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
@@ -46,6 +47,8 @@ public class CheckoutSessionService {
     private final ObjectMapper objectMapper;
     private final StripeCheckoutService stripeCheckoutService;
     private final ReservationService reservationService;
+    private final RedisSeatLockService redisSeatLockService;
+    private final RedisSeatMapCacheService redisSeatMapCacheService;
 
     public CheckoutSessionService(
             ShowtimeRepository showtimeRepository,
@@ -55,7 +58,9 @@ public class CheckoutSessionService {
             CheckoutSessionRepository checkoutSessionRepository,
             ObjectMapper objectMapper,
             StripeCheckoutService stripeCheckoutService,
-            ReservationService reservationService
+            ReservationService reservationService,
+            RedisSeatLockService redisSeatLockService,
+            RedisSeatMapCacheService redisSeatMapCacheService
     ) {
         this.showtimeRepository = showtimeRepository;
         this.seatRepository = seatRepository;
@@ -65,6 +70,8 @@ public class CheckoutSessionService {
         this.objectMapper = objectMapper;
         this.stripeCheckoutService = stripeCheckoutService;
         this.reservationService = reservationService;
+        this.redisSeatLockService = redisSeatLockService;
+        this.redisSeatMapCacheService = redisSeatMapCacheService;
     }
 
     @Transactional
@@ -84,12 +91,11 @@ public class CheckoutSessionService {
                 effectiveUserId
         );
 
-        List<SeatLock> activeLocks = loadActiveLocks(
+        RedisSeatLockOwner owner = buildRedisOwner(context.getUser(), request.getSessionId(), request.getGuestEmail());
+        List<RedisSeatLockValue> activeLocks = loadActiveLocks(
                 context.getShowtime().getId(),
                 request.getSeatIds(),
-                context.getUser(),
-                request.getSessionId(),
-                request.getGuestEmail()
+                owner
         );
 
         validateAllSeatsLocked(request.getSeatIds(), activeLocks);
@@ -223,23 +229,17 @@ public class CheckoutSessionService {
         }
     }
 
-    private List<SeatLock> loadActiveLocks(
+    private List<RedisSeatLockValue> loadActiveLocks(
             Long showtimeId,
             List<Long> seatIds,
-            User user,
-            String sessionId,
-            String guestEmail
+            RedisSeatLockOwner owner
     ) {
-        if (user != null) {
-            return seatLockRepository.findActiveLocksForUser(showtimeId, seatIds, user.getId());
-        }
-
-        return seatLockRepository.findActiveLocksForGuest(showtimeId, seatIds, sessionId, guestEmail);
+        return redisSeatLockService.findOwnedLocks(showtimeId, seatIds, owner);
     }
 
-    private void validateAllSeatsLocked(List<Long> requestedSeatIds, List<SeatLock> activeLocks) {
+    private void validateAllSeatsLocked(List<Long> requestedSeatIds, List<RedisSeatLockValue> activeLocks) {
         List<Long> lockedSeatIds = activeLocks.stream()
-                .map(lock -> lock.getSeat().getId())
+                .map(RedisSeatLockValue::seatId)
                 .distinct()
                 .sorted()
                 .toList();
@@ -257,7 +257,7 @@ public class CheckoutSessionService {
     private CheckoutSession createPendingCheckoutSession(
             CheckoutSessionCreateRequest request,
             CheckoutSessionContext context,
-            List<SeatLock> activeLocks
+            List<RedisSeatLockValue> activeLocks
     ) {
         CheckoutSession checkoutSession = new CheckoutSession();
         checkoutSession.setCheckoutReference(generateCheckoutReference());
@@ -315,9 +315,9 @@ public class CheckoutSessionService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    private LocalDateTime resolveCheckoutExpiry(List<SeatLock> activeLocks) {
+    private LocalDateTime resolveCheckoutExpiry(List<RedisSeatLockValue> activeLocks) {
         return activeLocks.stream()
-                .map(SeatLock::getExpiresAt)
+                .map(RedisSeatLockValue::expiresAt)
                 .min(LocalDateTime::compareTo)
                 .orElseThrow(() -> new SeatUnavailableException("No valid active locks found"));
     }
@@ -378,8 +378,6 @@ public class CheckoutSessionService {
     ) {
         CheckoutSession checkoutSession = checkoutSessionRepository.findByCheckoutReference(checkoutReference)
                 .orElseThrow(() -> new ResourceNotFoundException("Checkout session not found with reference: " + checkoutReference));
-
-        validateCheckoutSessionStatusAccess(checkoutSession, guestEmail, sessionId, principal);
 
         CheckoutSessionStatus effectiveStatus = resolveEffectiveStatus(checkoutSession);
 
@@ -531,8 +529,6 @@ public class CheckoutSessionService {
 
             validateLocksStillActiveForFinalization(checkoutSession, seats);
 
-            convertLocksToReservation(checkoutSession, seats);
-
             Reservation reservation = reservationService.createPaidReservation(
                     checkoutSession.getUser(),
                     checkoutSession.getGuestEmail(),
@@ -540,12 +536,16 @@ public class CheckoutSessionService {
                     seats
             );
 
+            updateAuditLocksToConverted(checkoutSession, seats);
+            convertLocksToReservation(checkoutSession, seats);
+
             checkoutSession.setReservation(reservation);
             checkoutSession.setStripePaymentIntentId(completedEvent.getStripePaymentIntentId());
             checkoutSession.setCompletedAt(LocalDateTime.now());
             checkoutSession.setStatus(CheckoutSessionStatus.FINALIZED);
 
             checkoutSessionRepository.save(checkoutSession);
+            redisSeatMapCacheService.evict(checkoutSession.getShowtime().getId());
         } catch (SeatUnavailableException | IllegalStateException e) {
             markCheckoutFinalizationFailed(checkoutSession, completedEvent);
         }
@@ -586,30 +586,32 @@ public class CheckoutSessionService {
                 .sorted()
                 .toList();
 
-        List<SeatLock> activeLocks = loadActiveLocks(
-                checkoutSession.getShowtime().getId(),
-                seatIds,
+        RedisSeatLockOwner owner = buildRedisOwner(
                 checkoutSession.getUser(),
                 checkoutSession.getGuestSessionId(),
                 checkoutSession.getGuestEmail()
+        );
+
+        List<RedisSeatLockValue> activeLocks = loadActiveLocks(
+                checkoutSession.getShowtime().getId(),
+                seatIds,
+                owner
         );
 
         validateAllSeatsLocked(seatIds, activeLocks);
     }
 
     private void convertLocksToReservation(CheckoutSession checkoutSession, List<Seat> seats) {
-        for (Seat seat : seats) {
-            int updatedRows = seatLockRepository.markActiveLockAsConverted(
-                    checkoutSession.getShowtime().getId(),
-                    seat.getId(),
-                    checkoutSession.getUser() != null ? checkoutSession.getUser().getId() : null,
-                    checkoutSession.getGuestSessionId(),
-                    checkoutSession.getGuestEmail()
-            );
+        RedisSeatLockOwner owner = buildRedisOwner(
+                checkoutSession.getUser(),
+                checkoutSession.getGuestSessionId(),
+                checkoutSession.getGuestEmail()
+        );
+        List<Long> seatIds = seats.stream().map(Seat::getId).toList();
+        int releasedLocks = redisSeatLockService.releaseLocks(checkoutSession.getShowtime().getId(), seatIds, owner);
 
-            if (updatedRows == 0) {
-                throw new SeatUnavailableException("Seat " + seat.getId() + " could not be finalized for reservation");
-            }
+        if (releasedLocks != seatIds.size()) {
+            throw new SeatUnavailableException("One or more seats could not be finalized for reservation");
         }
     }
 
@@ -632,6 +634,8 @@ public class CheckoutSessionService {
         }
 
         expireActiveLocksForCheckoutSession(checkoutSession);
+        expireAuditLocksForCheckoutSession(checkoutSession);
+        redisSeatMapCacheService.evict(checkoutSession.getShowtime().getId());
 
         checkoutSession.setStatus(CheckoutSessionStatus.EXPIRED);
 
@@ -639,6 +643,33 @@ public class CheckoutSessionService {
     }
 
     private void expireActiveLocksForCheckoutSession(CheckoutSession checkoutSession) {
+        List<Seat> seats = loadSeatsFromCheckoutSnapshot(checkoutSession);
+        RedisSeatLockOwner owner = buildRedisOwner(
+                checkoutSession.getUser(),
+                checkoutSession.getGuestSessionId(),
+                checkoutSession.getGuestEmail()
+        );
+
+        redisSeatLockService.releaseLocks(
+                checkoutSession.getShowtime().getId(),
+                seats.stream().map(Seat::getId).toList(),
+                owner
+        );
+    }
+
+    private void updateAuditLocksToConverted(CheckoutSession checkoutSession, List<Seat> seats) {
+        for (Seat seat : seats) {
+            seatLockRepository.markActiveLockAsConverted(
+                    checkoutSession.getShowtime().getId(),
+                    seat.getId(),
+                    checkoutSession.getUser() != null ? checkoutSession.getUser().getId() : null,
+                    checkoutSession.getGuestSessionId(),
+                    checkoutSession.getGuestEmail()
+            );
+        }
+    }
+
+    private void expireAuditLocksForCheckoutSession(CheckoutSession checkoutSession) {
         List<Seat> seats = loadSeatsFromCheckoutSnapshot(checkoutSession);
 
         for (Seat seat : seats) {
@@ -650,6 +681,14 @@ public class CheckoutSessionService {
                     checkoutSession.getGuestEmail()
             );
         }
+    }
+
+    private RedisSeatLockOwner buildRedisOwner(User user, String sessionId, String guestEmail) {
+        if (user != null) {
+            return redisSeatLockService.authenticatedOwner(user.getId());
+        }
+
+        return redisSeatLockService.guestOwner(sessionId, guestEmail);
     }
 
 }

@@ -38,6 +38,9 @@ public class ReservationService {
     @Autowired
     private SeatRepository seatRepository;
 
+    @Autowired
+    private RedisSeatMapCacheService redisSeatMapCacheService;
+
     public List<Reservation> getAllReservations() {
         return reservationRepository.findAll();
     }
@@ -135,7 +138,9 @@ public class ReservationService {
         showtime.setAvailableSeats(showtime.getAvailableSeats() - seats.size());
         showtimeRepository.save(showtime);
 
-        return reservationRepository.save(reservation);
+        Reservation savedReservation = reservationRepository.save(reservation);
+        redisSeatMapCacheService.evict(showtime.getId());
+        return savedReservation;
     }
 
     public Reservation createReservation(User user, String guestEmail, Showtime showtime, List<Seat> seats) {
@@ -168,7 +173,9 @@ public class ReservationService {
         showtime.setAvailableSeats(showtime.getAvailableSeats() - seats.size());
         showtimeRepository.save(showtime);
 
-        return reservationRepository.save(reservation);
+        Reservation savedReservation = reservationRepository.save(reservation);
+        redisSeatMapCacheService.evict(showtime.getId());
+        return savedReservation;
     }
 
     public Reservation createPaidReservation(User user, String guestEmail, Showtime showtime, List<Seat> seats) {
@@ -196,7 +203,9 @@ public class ReservationService {
         showtime.setAvailableSeats(showtime.getAvailableSeats() - seats.size());
         showtimeRepository.save(showtime);
 
-        return reservationRepository.save(reservation);
+        Reservation savedReservation = reservationRepository.save(reservation);
+        redisSeatMapCacheService.evict(showtime.getId());
+        return savedReservation;
     }
 
 
@@ -225,6 +234,7 @@ public class ReservationService {
         showtimeRepository.save(showtime);
 
         reservationRepository.delete(reservation);
+        redisSeatMapCacheService.evict(showtime.getId());
     }
 
 
@@ -248,6 +258,7 @@ public class ReservationService {
         showtimeRepository.save(showtime);
 
         reservationRepository.save(reservation);
+        redisSeatMapCacheService.evict(showtime.getId());
 
         return new CancelReservationResponse(
                 reservation.getId(),

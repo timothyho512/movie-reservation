@@ -27,7 +27,8 @@ Copy the printed `whsec_...` value into `.env` as `STRIPE_WEBHOOK_SECRET`, then 
 
 ## Core Rules
 
-- `SeatLock` is the temporary hold before payment succeeds.
+- Redis is the active temporary hold store before payment succeeds.
+- Postgres `SeatLock` rows are audit/history records, not the live availability authority.
 - `CheckoutSession` stores the internal payment attempt and Stripe IDs.
 - `Reservation` is created only after a verified `checkout.session.completed` webhook.
 - The Stripe webhook is authoritative; the frontend success redirect does not create a reservation.
@@ -37,7 +38,7 @@ Copy the printed `whsec_...` value into `.env` as `STRIPE_WEBHOOK_SECRET`, then 
 
 ## POST `/checkout/lock`
 
-Creates temporary seat locks.
+Creates temporary Redis seat holds and writes legacy Postgres `seat_locks` audit rows.
 
 Guest request:
 
@@ -113,7 +114,8 @@ Important behavior:
 
 - all requested seats must already be actively locked by the caller
 - no reservation is created here
-- locks stay `LOCKED` while the customer is on Stripe
+- Redis holds remain active while the customer is on Stripe
+- checkout expiry is based on the earliest Redis hold expiry
 - `checkoutReference` is the frontend-safe reference used for status polling
 - `stripeCheckoutSessionId` is stored for webhook matching
 
@@ -145,9 +147,9 @@ Completed webhook behavior:
 2. lock that database row while finalizing
 3. exit safely if it is already `FINALIZED`
 4. fail safely if it was `CANCELLED`, `EXPIRED`, or `FAILED`
-5. validate the seat locks are still active and owned by the checkout owner
-6. convert locks to `CONVERTED_TO_RESERVATION`
-7. create reservation with `CONFIRMED + PAID`
+5. validate the Redis holds are still active and owned by the checkout owner
+6. create reservation with `CONFIRMED + PAID`
+7. release Redis holds and mark audit locks `CONVERTED_TO_RESERVATION`
 8. link reservation to checkout session
 9. mark checkout session `FINALIZED`
 
@@ -156,7 +158,7 @@ Expired webhook behavior:
 1. load checkout session by `stripeCheckoutSessionId`
 2. lock that database row while expiring
 3. exit safely if it is already `FINALIZED`, `CANCELLED`, or `EXPIRED`
-4. expire the active locks for the checkout session
+4. release the active Redis holds for the checkout session and mark audit locks `EXPIRED`
 5. mark checkout session `EXPIRED`
 
 ## GET `/checkout/session/{checkoutReference}`
@@ -210,12 +212,14 @@ Finalized response:
 - `FAILED`: Stripe reported completion after the checkout could no longer be finalized safely
 - `PAID`: available enum value, not the normal final state in the current flow
 
-`LockStatus` values:
+`LockStatus` values for Postgres audit rows:
 
-- `LOCKED`: temporary active hold
-- `CONVERTED_TO_RESERVATION`: lock became a paid reservation
-- `EXPIRED`: lock was released
-- `PROCESSING`: legacy/internal transition used by the fake confirm path
+- `LOCKED`: Redis hold was created and an audit row was recorded
+- `CONVERTED_TO_RESERVATION`: held seat became a paid reservation
+- `EXPIRED`: hold was released, cancelled, or timed out
+- `PROCESSING`: legacy value kept for old data/tests; not used by the Redis flow
+
+Redis hold keys expire naturally after `app.seat-lock.ttl-seconds`, currently 900 seconds.
 
 ## Lifecycle
 
@@ -238,7 +242,7 @@ POST /checkout/lock
 POST /checkout/session
 customer does not pay
 Stripe sends checkout.session.expired or local cleanup expires the checkout
-locks are released
+Redis holds are released or expire naturally
 no reservation is created
 ```
 

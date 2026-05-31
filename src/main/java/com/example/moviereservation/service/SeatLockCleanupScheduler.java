@@ -19,7 +19,7 @@ public class SeatLockCleanupScheduler {
         int expiredCheckoutSessionCount = seatLockCleanupService.expireStalePendingCheckoutSessions();
 
         if (expiredLockCount > 0) {
-            System.out.println("Expired " + expiredLockCount + " seat locks");
+            System.out.println("Expired " + expiredLockCount + " audit seat locks");
         }
 
         if (expiredCheckoutSessionCount > 0) {
