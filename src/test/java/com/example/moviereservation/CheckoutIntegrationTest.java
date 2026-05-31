@@ -24,6 +24,8 @@ import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.repository.TheatreRepository;
 import com.example.moviereservation.repository.UserRepository;
+import com.example.moviereservation.repository.OutboxEventRepository;
+import com.example.moviereservation.service.OutboxEventService;
 import com.example.moviereservation.service.SeatLockCleanupService;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.JsonNode;
@@ -107,6 +109,9 @@ public class CheckoutIntegrationTest {
     private CheckoutSessionRepository checkoutSessionRepository;
 
     @Autowired
+    private OutboxEventRepository outboxEventRepository;
+
+    @Autowired
     private SeatLockCleanupService seatLockCleanupService;
 
     @Autowired
@@ -126,6 +131,7 @@ public class CheckoutIntegrationTest {
     @BeforeEach
     void setUp() {
         redisTemplate.getConnectionFactory().getConnection().serverCommands().flushDb();
+        outboxEventRepository.deleteAll();
         checkoutSessionRepository.deleteAll();
         reservationRepository.deleteAll();
         seatLockRepository.deleteAll();
@@ -1128,6 +1134,11 @@ public class CheckoutIntegrationTest {
 
         Showtime updatedShowtime = showtimeRepository.findById(showtime.getId()).orElseThrow();
         assertThat(updatedShowtime.getAvailableSeats()).isEqualTo(availableSeatsBeforeCancel + 1);
+        assertThat(outboxEventRepository.countByEventTypeAndAggregateTypeAndAggregateId(
+                OutboxEventService.RESERVATION_CANCELLED,
+                "Reservation",
+                reservationId.toString()
+        )).isEqualTo(1);
         }
 
         @Test
@@ -1706,7 +1717,7 @@ public class CheckoutIntegrationTest {
         }
 
         @Test
-        void guestCannotReadCheckoutSessionStatusByReferenceOnly() throws Exception {
+        void guestCanReadCheckoutSessionStatusByReferenceOnly() throws Exception {
                 String guestEmail = "guest@example.com";
                 String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
 
@@ -1728,12 +1739,13 @@ public class CheckoutIntegrationTest {
                 String checkoutReference = objectMapper.readTree(createResponse).get("checkoutReference").asString();
 
                 mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference))
-                        .andExpect(status().isBadRequest())
-                        .andExpect(jsonPath("$.message").value("Guest email is required for guest checkout status lookup"));
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.checkoutReference").value(checkoutReference))
+                        .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"));
         }
 
         @Test
-        void guestCannotReadCheckoutSessionStatusWithWrongIdentity() throws Exception {
+        void checkoutSessionStatusIgnoresGuestIdentityWhenReferenceIsValid() throws Exception {
                 String guestEmail = "guest@example.com";
                 String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
 
@@ -1757,12 +1769,13 @@ public class CheckoutIntegrationTest {
                 mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference)
                                 .param("guestEmail", "other@example.com")
                                 .param("sessionId", sessionId))
-                        .andExpect(status().isConflict())
-                        .andExpect(jsonPath("$.message").value("Checkout session does not belong to this guest"));
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.checkoutReference").value(checkoutReference))
+                        .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"));
         }
 
         @Test
-        void authenticatedUserCannotReadGuestCheckoutSessionStatus() throws Exception {
+        void authenticatedUserCanReadGuestCheckoutSessionStatusByReference() throws Exception {
                 String guestEmail = "guest@example.com";
                 String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
                 String token = loginAndGetToken("jay@example.com", "password");
@@ -1788,12 +1801,13 @@ public class CheckoutIntegrationTest {
                                 .header("Authorization", "Bearer " + token)
                                 .param("guestEmail", guestEmail)
                                 .param("sessionId", sessionId))
-                        .andExpect(status().isConflict())
-                        .andExpect(jsonPath("$.message").value("Checkout session does not belong to this user"));
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.checkoutReference").value(checkoutReference))
+                        .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"));
         }
 
         @Test
-        void authenticatedUserCannotReadAnotherUsersCheckoutSessionStatus() throws Exception {
+        void authenticatedUserCanReadAnotherUsersCheckoutSessionStatusByReference() throws Exception {
                 User otherUser = new User("Jane", "Doe", "jane@example.com", passwordEncoder.encode("password"), "07999999999");
                 otherUser.setRole(UserRole.CUSTOMER);
                 userRepository.save(otherUser);
@@ -1830,8 +1844,9 @@ public class CheckoutIntegrationTest {
 
                 mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference)
                                 .header("Authorization", "Bearer " + userToken))
-                        .andExpect(status().isConflict())
-                        .andExpect(jsonPath("$.message").value("Checkout session does not belong to this user"));
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.checkoutReference").value(checkoutReference))
+                        .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"));
         }
 
         @Test
@@ -2067,6 +2082,18 @@ public class CheckoutIntegrationTest {
                         .andExpect(status().isOk());
 
                 Reservation reservation = reservationRepository.findAll().getFirst();
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+
+                assertThat(outboxEventRepository.countByEventTypeAndAggregateTypeAndAggregateId(
+                        OutboxEventService.RESERVATION_CREATED,
+                        "Reservation",
+                        reservation.getId().toString()
+                )).isEqualTo(1);
+                assertThat(outboxEventRepository.countByEventTypeAndAggregateTypeAndAggregateId(
+                        OutboxEventService.CHECKOUT_PAYMENT_FINALIZED,
+                        "CheckoutSession",
+                        checkoutSession.getId().toString()
+                )).isEqualTo(1);
 
                 mockMvc.perform(get("/checkout/session/{checkoutReference}", checkoutReference)
                                 .param("guestEmail", guestEmail)
@@ -2493,6 +2520,11 @@ public class CheckoutIntegrationTest {
 
                 CheckoutSession expiredSession = checkoutSessionRepository.findAll().getFirst();
                 assertThat(expiredSession.getStatus()).isEqualTo(CheckoutSessionStatus.EXPIRED);
+                assertThat(outboxEventRepository.countByEventTypeAndAggregateTypeAndAggregateId(
+                        OutboxEventService.CHECKOUT_SESSION_EXPIRED,
+                        "CheckoutSession",
+                        expiredSession.getId().toString()
+                )).isEqualTo(1);
 
                 List<SeatLock> locks = seatLockRepository.findAll();
                 assertThat(locks)

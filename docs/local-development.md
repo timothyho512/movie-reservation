@@ -35,6 +35,8 @@ The main development database is available at `localhost:5433`. The test databas
 
 Redis stores active temporary seat holds and short-lived seat-map cache entries. Postgres remains the source of truth for confirmed reservations, checkout sessions, and audit/history rows.
 
+The backend also runs a scheduled transactional outbox worker locally. In V1 it publishes outbox events through a log/stub publisher, so no broker or email service is required for local development.
+
 ## Start the backend
 
 Spring Boot does not automatically load `.env`, so export the file into the shell before running the backend:

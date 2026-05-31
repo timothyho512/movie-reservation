@@ -21,6 +21,7 @@ import com.example.moviereservation.repository.SeatLockRepository;
 import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.repository.UserRepository;
+import com.example.moviereservation.service.OutboxEventService;
 import com.example.moviereservation.security.CustomUserPrincipal;
 import com.example.moviereservation.service.RedisSeatLockService.RedisSeatLockOwner;
 import com.example.moviereservation.service.RedisSeatLockService.RedisSeatLockValue;
@@ -49,6 +50,7 @@ public class CheckoutSessionService {
     private final ReservationService reservationService;
     private final RedisSeatLockService redisSeatLockService;
     private final RedisSeatMapCacheService redisSeatMapCacheService;
+    private final OutboxEventService outboxEventService;
 
     public CheckoutSessionService(
             ShowtimeRepository showtimeRepository,
@@ -60,7 +62,8 @@ public class CheckoutSessionService {
             StripeCheckoutService stripeCheckoutService,
             ReservationService reservationService,
             RedisSeatLockService redisSeatLockService,
-            RedisSeatMapCacheService redisSeatMapCacheService
+            RedisSeatMapCacheService redisSeatMapCacheService,
+            OutboxEventService outboxEventService
     ) {
         this.showtimeRepository = showtimeRepository;
         this.seatRepository = seatRepository;
@@ -72,6 +75,7 @@ public class CheckoutSessionService {
         this.reservationService = reservationService;
         this.redisSeatLockService = redisSeatLockService;
         this.redisSeatMapCacheService = redisSeatMapCacheService;
+        this.outboxEventService = outboxEventService;
     }
 
     @Transactional
@@ -545,6 +549,7 @@ public class CheckoutSessionService {
             checkoutSession.setStatus(CheckoutSessionStatus.FINALIZED);
 
             checkoutSessionRepository.save(checkoutSession);
+            outboxEventService.recordCheckoutPaymentFinalized(checkoutSession);
             redisSeatMapCacheService.evict(checkoutSession.getShowtime().getId());
         } catch (SeatUnavailableException | IllegalStateException e) {
             markCheckoutFinalizationFailed(checkoutSession, completedEvent);
@@ -640,6 +645,7 @@ public class CheckoutSessionService {
         checkoutSession.setStatus(CheckoutSessionStatus.EXPIRED);
 
         checkoutSessionRepository.save(checkoutSession);
+        outboxEventService.recordCheckoutSessionExpired(checkoutSession);
     }
 
     private void expireActiveLocksForCheckoutSession(CheckoutSession checkoutSession) {

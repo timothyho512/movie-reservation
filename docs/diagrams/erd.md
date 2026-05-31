@@ -7,6 +7,7 @@ Use it when you need to understand how the API response fields map back to persi
 - reservation responses come from `RESERVATION`, `SHOWTIME`, `MOVIE`, `SCREEN`, and `SEAT`
 - checkout status responses come from `CHECKOUT_SESSION`
 - seat-map availability comes from `SEAT`, active `SEAT_LOCK` rows, and existing `RESERVATION_SEATS`
+- reliable follow-up events are recorded in `OUTBOX_EVENT`
 
 For local setup and seeded demo data, see `docs/local-development.md`.
 
@@ -159,6 +160,21 @@ erDiagram
         BIGINT reservation_id PK, FK
         BIGINT seat_id PK, FK
     }
+
+    OUTBOX_EVENT {
+        BIGINT id PK
+        STRING event_type
+        STRING aggregate_type
+        STRING aggregate_id
+        TEXT payload_json
+        STRING status
+        INT attempt_count
+        DATETIME next_attempt_at
+        DATETIME published_at
+        TEXT last_error
+        DATETIME created_at
+        DATETIME updated_at
+    }
 ```
 
 ## Ownership Rules
@@ -168,3 +184,4 @@ erDiagram
 - `CHECKOUT_SESSION` is owned by exactly one authenticated `USER` or one guest identity pair: `guest_email + guest_session_id`.
 - `CHECKOUT_SESSION.items_snapshot_json` stores a durable purchase snapshot of seats/items at payment time.
 - `RESERVATION` is created only after Stripe confirms payment through the webhook.
+- `OUTBOX_EVENT` stores internal integration events. `aggregate_type + aggregate_id` identifies the related domain row without a direct foreign key.

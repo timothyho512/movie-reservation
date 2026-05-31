@@ -161,21 +161,32 @@ Expired webhook behavior:
 4. release the active Redis holds for the checkout session and mark audit locks `EXPIRED`
 5. mark checkout session `EXPIRED`
 
+## Transactional Outbox Events
+
+Reservation and checkout state changes also write durable outbox events in the same Postgres transaction as the business update. This lets the backend publish follow-up side effects, such as email or analytics, without losing the event if publishing fails after the database commit.
+
+Current events:
+
+- `ReservationCreated`
+- `ReservationCancelled`
+- `CheckoutPaymentFinalized`
+- `CheckoutSessionExpired`
+
+The V1 publisher is a log/stub implementation. A scheduled worker polls due outbox rows, marks them `PROCESSING`, publishes them, then marks them `PUBLISHED` or `FAILED`. Failed rows are retried until their max attempt count is reached.
+
+This is internal backend behavior. It does not change request/response shapes for checkout, reservation, or webhook endpoints.
+
 ## GET `/checkout/session/{checkoutReference}`
 
 Returns checkout status for frontend polling after the Stripe redirect.
 
-Guest lookup requires:
+This endpoint treats `checkoutReference` as a bearer-style polling credential. The reference is randomly generated and included in the Stripe success/cancel redirect URL, so the frontend can poll status after a full page reload without needing the guest `sessionId` from in-memory state.
 
 ```http
-GET /checkout/session/chk_1776170000000abcdef?guestEmail=guest@example.com&sessionId=guest-session-id
+GET /checkout/session/chk_1776170000000abcdef
 ```
 
-Authenticated lookup requires:
-
-```http
-Authorization: Bearer <jwt>
-```
+No JWT, guest email, or guest session ID is required for checkout status polling. Reservation detail/history endpoints still enforce normal ownership checks.
 
 Pending response:
 

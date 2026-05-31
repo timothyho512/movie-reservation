@@ -12,6 +12,7 @@ import com.example.moviereservation.repository.ReservationRepository;
 import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.repository.UserRepository;
+import com.example.moviereservation.service.OutboxEventService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,6 +41,9 @@ public class ReservationService {
 
     @Autowired
     private RedisSeatMapCacheService redisSeatMapCacheService;
+
+    @Autowired
+    private OutboxEventService outboxEventService;
 
     public List<Reservation> getAllReservations() {
         return reservationRepository.findAll();
@@ -139,6 +143,7 @@ public class ReservationService {
         showtimeRepository.save(showtime);
 
         Reservation savedReservation = reservationRepository.save(reservation);
+        outboxEventService.recordReservationCreated(savedReservation);
         redisSeatMapCacheService.evict(showtime.getId());
         return savedReservation;
     }
@@ -174,6 +179,7 @@ public class ReservationService {
         showtimeRepository.save(showtime);
 
         Reservation savedReservation = reservationRepository.save(reservation);
+        outboxEventService.recordReservationCreated(savedReservation);
         redisSeatMapCacheService.evict(showtime.getId());
         return savedReservation;
     }
@@ -204,6 +210,7 @@ public class ReservationService {
         showtimeRepository.save(showtime);
 
         Reservation savedReservation = reservationRepository.save(reservation);
+        outboxEventService.recordReservationCreated(savedReservation);
         redisSeatMapCacheService.evict(showtime.getId());
         return savedReservation;
     }
@@ -258,6 +265,7 @@ public class ReservationService {
         showtimeRepository.save(showtime);
 
         reservationRepository.save(reservation);
+        outboxEventService.recordReservationCancelled(reservation);
         redisSeatMapCacheService.evict(showtime.getId());
 
         return new CancelReservationResponse(
