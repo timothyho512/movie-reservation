@@ -389,6 +389,17 @@ Temporarily locks seats in Redis before payment. Postgres `seat_locks` rows are 
 
 Auth: optional
 
+Optional header:
+
+```http
+Idempotency-Key: checkout-attempt-abc-123
+```
+
+When provided, retries for the same owner and same request body return the
+original checkout session response instead of creating another Stripe Checkout
+Session. Reusing the same key with different showtime, seats, or owner identity
+returns `409 Conflict`.
+
 Request:
 
 ```json

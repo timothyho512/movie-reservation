@@ -6,6 +6,7 @@ import com.example.moviereservation.entity.CheckoutSession;
 import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
 import com.stripe.model.checkout.Session;
+import com.stripe.net.RequestOptions;
 import com.stripe.param.checkout.SessionCreateParams;
 import org.springframework.stereotype.Service;
 
@@ -31,6 +32,13 @@ public class StripeCheckoutService {
     }
 
     public StripeCheckoutSessionResult createHostedCheckoutSession(CheckoutSession checkoutSession) {
+        return createHostedCheckoutSession(checkoutSession, null);
+    }
+
+    public StripeCheckoutSessionResult createHostedCheckoutSession(
+            CheckoutSession checkoutSession,
+            String stripeIdempotencyKey
+    ) {
         try {
             Stripe.apiKey = stripeProperties.getSecretKey();
 
@@ -63,7 +71,15 @@ public class StripeCheckoutService {
                             .putAllMetadata(buildMetadata(checkoutSession))
                             .build();
 
-            Session session = Session.create(params);
+            Session session;
+            if (stripeIdempotencyKey == null || stripeIdempotencyKey.isBlank()) {
+                session = Session.create(params);
+            } else {
+                RequestOptions requestOptions = RequestOptions.builder()
+                        .setIdempotencyKey(stripeIdempotencyKey)
+                        .build();
+                session = Session.create(params, requestOptions);
+            }
 
             return new StripeCheckoutSessionResult(
                     session.getId(),

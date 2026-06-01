@@ -20,6 +20,17 @@ public interface CheckoutSessionRepository extends JpaRepository<CheckoutSession
 
     Optional<CheckoutSession> findByStripeCheckoutSessionId(String stripeCheckoutSessionId);
 
+    Optional<CheckoutSession> findFirstByUserIdAndIdempotencyKey(
+            Long userId,
+            String idempotencyKey
+    );
+
+    Optional<CheckoutSession> findFirstByGuestEmailAndGuestSessionIdAndIdempotencyKey(
+            String guestEmail,
+            String guestSessionId,
+            String idempotencyKey
+    );
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
             SELECT cs

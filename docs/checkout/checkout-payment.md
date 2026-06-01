@@ -77,6 +77,17 @@ For authenticated users, `sessionId` is `null`.
 
 Creates the internal checkout session, creates the Stripe Checkout Session, stores Stripe IDs, and returns the redirect URL.
 
+Clients should send one stable `Idempotency-Key` header per checkout attempt:
+
+```http
+Idempotency-Key: checkout-attempt-abc-123
+```
+
+If the frontend retries the same request with the same key after a timeout, the
+backend returns the original `checkoutReference`, Stripe Checkout Session ID,
+and `checkoutUrl`. If the same key is reused for a different showtime, seat
+selection, or checkout owner, the backend returns `409 Conflict`.
+
 Guest request:
 
 ```json
@@ -118,6 +129,8 @@ Important behavior:
 - checkout expiry is based on the earliest Redis hold expiry
 - `checkoutReference` is the frontend-safe reference used for status polling
 - `stripeCheckoutSessionId` is stored for webhook matching
+- API-level idempotency protects checkout session creation before Stripe redirects
+- Stripe webhook idempotency protects reservation finalization after payment
 
 ## Stripe Redirect
 

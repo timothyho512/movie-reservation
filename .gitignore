@@ -46,5 +46,3 @@ out/
 .DS_Store
 
 /docs/self_purpose/*
-!/docs/self_purpose/RabbitMQ-Async-Work/
-!/docs/self_purpose/RabbitMQ-Async-Work/**

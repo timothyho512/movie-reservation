@@ -12,6 +12,7 @@ import com.example.moviereservation.service.CheckoutService;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.example.moviereservation.dto.CheckoutSessionCreateRequest;
@@ -73,9 +74,14 @@ public class CheckoutController {
     // Canonical real-payment entry point: creates a Stripe Checkout Session for active locks.
     public ResponseEntity<CheckoutSessionCreateResponse> createCheckoutSession(
             @RequestBody CheckoutSessionCreateRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             Authentication authentication
     ) {
-        return ResponseEntity.ok(checkoutSessionService.createCheckoutSession(request, extractPrincipal(authentication)));
+        return ResponseEntity.ok(checkoutSessionService.createCheckoutSession(
+                request,
+                extractPrincipal(authentication),
+                idempotencyKey
+        ));
     }
 
     @GetMapping("session/{checkoutReference}")

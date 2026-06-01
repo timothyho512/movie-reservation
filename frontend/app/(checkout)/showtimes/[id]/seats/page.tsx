@@ -17,7 +17,7 @@ import { SeatMapSkeleton } from "@/components/shared/LoadingSkeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { formatDate, formatTime, formatPrice } from "@/lib/format";
+import { formatDate, formatTime } from "@/lib/format";
 import { ApiError } from "@/lib/api-client";
 import { z } from "zod";
 
@@ -48,6 +48,10 @@ export default function SeatsPage({
   const [guestEmailError, setGuestEmailError] = useState("");
   const [isLocking, setIsLocking] = useState(false);
   const [isPaying, setIsPaying] = useState(false);
+  const [checkoutAttempt, setCheckoutAttempt] = useState<{
+    signature: string;
+    idempotencyKey: string;
+  } | null>(null);
   const isLocked = !!expiresAt;
 
   const { isExpired } = useLockCountdown(expiresAt);
@@ -65,6 +69,7 @@ export default function SeatsPage({
   useEffect(() => {
     if (isExpired && isLocked) {
       reset();
+      setCheckoutAttempt(null);
       toast.error("Your seat hold expired. Please select seats again.");
     }
   }, [isExpired, isLocked, reset]);
@@ -97,6 +102,7 @@ export default function SeatsPage({
         ...(!isLoggedIn && { guestEmail }),
       });
       setLock(response.sessionId, response.expiresAt);
+      setCheckoutAttempt(null);
       toast.success("Seats held for 15 minutes!");
     } catch (e) {
       if (isLoggedIn && e instanceof ApiError && (e.status === 401 || e.status === 400)) {
@@ -114,11 +120,32 @@ export default function SeatsPage({
   async function handlePay() {
     setIsPaying(true);
     try {
+      const seatIds = Array.from(selectedSeatIds).sort((a, b) => a - b);
+      const signature = JSON.stringify({
+        showtimeId,
+        seatIds,
+        mode: isLoggedIn ? "authenticated" : "guest",
+        guestEmail: isLoggedIn ? null : guestEmail.trim().toLowerCase(),
+        sessionId: isLoggedIn ? null : sessionId,
+      });
+
+      const attempt =
+        checkoutAttempt?.signature === signature
+          ? checkoutAttempt
+          : {
+              signature,
+              idempotencyKey: createIdempotencyKey(),
+            };
+
+      if (attempt !== checkoutAttempt) {
+        setCheckoutAttempt(attempt);
+      }
+
       const response = await createCheckoutSession({
         showtimeId,
-        seatIds: Array.from(selectedSeatIds),
+        seatIds,
         ...(!isLoggedIn && { guestEmail, sessionId: sessionId! }),
-      });
+      }, attempt.idempotencyKey);
       setCheckoutReference(response.checkoutReference);
       // Full browser navigation to Stripe
       window.location.href = response.checkoutUrl;
@@ -132,6 +159,14 @@ export default function SeatsPage({
       }
       setIsPaying(false);
     }
+  }
+
+  function createIdempotencyKey() {
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+      return crypto.randomUUID();
+    }
+
+    return `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
   async function handleContinue() {

@@ -57,6 +57,12 @@ public class CheckoutSession {
     @Column(name = "checkout_url", length = 2000)
     private String checkoutUrl;
 
+    @Column(name = "idempotency_key")
+    private String idempotencyKey;
+
+    @Column(name = "idempotency_request_fingerprint")
+    private String idempotencyRequestFingerprint;
+
 
     @OneToOne
     @JoinColumn(name = "reservation_id")
@@ -212,6 +218,22 @@ public class CheckoutSession {
 
     public void setCheckoutUrl(String checkoutUrl) {
         this.checkoutUrl = checkoutUrl;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
+    }
+
+    public String getIdempotencyRequestFingerprint() {
+        return idempotencyRequestFingerprint;
+    }
+
+    public void setIdempotencyRequestFingerprint(String idempotencyRequestFingerprint) {
+        this.idempotencyRequestFingerprint = idempotencyRequestFingerprint;
     }
 
 

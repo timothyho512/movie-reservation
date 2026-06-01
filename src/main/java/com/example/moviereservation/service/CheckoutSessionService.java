@@ -2,6 +2,7 @@ package com.example.moviereservation.service;
 
 import com.example.moviereservation.Exception.ResourceNotFoundException;
 import com.example.moviereservation.Exception.SeatUnavailableException;
+import com.example.moviereservation.Exception.IdempotencyConflictException;
 import com.example.moviereservation.dto.CheckoutSessionCreateRequest;
 import com.example.moviereservation.dto.CheckoutSessionCreateResponse;
 import com.example.moviereservation.dto.CheckoutSessionStatusResponse;
@@ -32,10 +33,13 @@ import tools.jackson.databind.ObjectMapper;
 import com.example.moviereservation.dto.StripeCheckoutSessionResult;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+import java.util.HexFormat;
 
 @Service
 public class CheckoutSessionService {
@@ -85,6 +89,16 @@ public class CheckoutSessionService {
             CheckoutSessionCreateRequest request,
             CustomUserPrincipal principal
     ) {
+        return createCheckoutSession(request, principal, null);
+    }
+
+    @Transactional
+    public CheckoutSessionCreateResponse createCheckoutSession(
+            CheckoutSessionCreateRequest request,
+            CustomUserPrincipal principal,
+            String idempotencyKey
+    ) {
+        String normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
         Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
 
         validateCheckoutSessionCreateRequest(request, effectiveUserId);
@@ -104,13 +118,49 @@ public class CheckoutSessionService {
 
         validateAllSeatsLocked(request.getSeatIds(), activeLocks);
 
+        String requestFingerprint = normalizedIdempotencyKey == null
+                ? null
+                : buildIdempotencyRequestFingerprint(request, effectiveUserId);
+
+        if (normalizedIdempotencyKey != null) {
+            CheckoutSession existingSession = findExistingIdempotentCheckoutSession(
+                    normalizedIdempotencyKey,
+                    effectiveUserId,
+                    request
+            );
+
+            if (existingSession != null) {
+                validateIdempotencyFingerprint(existingSession, requestFingerprint);
+                return buildCreateResponse(ensureStripeCheckoutSession(existingSession));
+            }
+        }
+
         CheckoutSession checkoutSession = createPendingCheckoutSession(
                 request,
                 context,
-                activeLocks
+                activeLocks,
+                normalizedIdempotencyKey,
+                requestFingerprint
         );
 
         return buildCreateResponse(checkoutSession);
+    }
+
+    private String normalizeIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null) {
+            return null;
+        }
+
+        String trimmed = idempotencyKey.trim();
+        if (trimmed.isBlank()) {
+            throw new IllegalArgumentException("Idempotency-Key must not be blank");
+        }
+
+        if (trimmed.length() > 255) {
+            throw new IllegalArgumentException("Idempotency-Key must not exceed 255 characters");
+        }
+
+        return trimmed;
     }
 
     private Long resolveAuthenticatedUserId(CustomUserPrincipal principal, String guestEmail) {
@@ -261,7 +311,9 @@ public class CheckoutSessionService {
     private CheckoutSession createPendingCheckoutSession(
             CheckoutSessionCreateRequest request,
             CheckoutSessionContext context,
-            List<RedisSeatLockValue> activeLocks
+            List<RedisSeatLockValue> activeLocks,
+            String idempotencyKey,
+            String requestFingerprint
     ) {
         CheckoutSession checkoutSession = new CheckoutSession();
         checkoutSession.setCheckoutReference(generateCheckoutReference());
@@ -278,20 +330,108 @@ public class CheckoutSessionService {
         checkoutSession.setCurrency(CurrencyCode.GBP);
         checkoutSession.setStatus(CheckoutSessionStatus.PENDING_PAYMENT);
         checkoutSession.setExpiresAt(resolveCheckoutExpiry(activeLocks));
+        checkoutSession.setIdempotencyKey(idempotencyKey);
+        checkoutSession.setIdempotencyRequestFingerprint(requestFingerprint);
 
 
         checkoutSession.setStripeCustomerEmail(resolveCustomerEmail(context.getUser(), request.getGuestEmail()));
 
         checkoutSession = checkoutSessionRepository.save(checkoutSession);
 
+        return ensureStripeCheckoutSession(checkoutSession);
+    }
+
+    private CheckoutSession findExistingIdempotentCheckoutSession(
+            String idempotencyKey,
+            Long effectiveUserId,
+            CheckoutSessionCreateRequest request
+    ) {
+        if (effectiveUserId != null) {
+            return checkoutSessionRepository
+                    .findFirstByUserIdAndIdempotencyKey(effectiveUserId, idempotencyKey)
+                    .orElse(null);
+        }
+
+        return checkoutSessionRepository
+                .findFirstByGuestEmailAndGuestSessionIdAndIdempotencyKey(
+                        request.getGuestEmail(),
+                        request.getSessionId(),
+                        idempotencyKey
+                )
+                .orElse(null);
+    }
+
+    private void validateIdempotencyFingerprint(
+            CheckoutSession checkoutSession,
+            String requestFingerprint
+    ) {
+        if (!requestFingerprint.equals(checkoutSession.getIdempotencyRequestFingerprint())) {
+            throw new IdempotencyConflictException(
+                    "Idempotency-Key was already used for a different checkout session request"
+            );
+        }
+    }
+
+    private CheckoutSession ensureStripeCheckoutSession(CheckoutSession checkoutSession) {
+        if (checkoutSession.getStripeCheckoutSessionId() != null
+                && !checkoutSession.getStripeCheckoutSessionId().isBlank()
+                && checkoutSession.getCheckoutUrl() != null
+                && !checkoutSession.getCheckoutUrl().isBlank()) {
+            return checkoutSession;
+        }
+
         StripeCheckoutSessionResult stripeResult =
-                stripeCheckoutService.createHostedCheckoutSession(checkoutSession);
+                stripeCheckoutService.createHostedCheckoutSession(
+                        checkoutSession,
+                        buildStripeIdempotencyKey(checkoutSession)
+                );
 
         checkoutSession.setStripeCheckoutSessionId(stripeResult.getCheckoutSessionId());
         checkoutSession.setStripePaymentIntentId(stripeResult.getPaymentIntentId());
         checkoutSession.setCheckoutUrl(stripeResult.getCheckoutUrl());
 
         return checkoutSessionRepository.save(checkoutSession);
+    }
+
+    private String buildIdempotencyRequestFingerprint(
+            CheckoutSessionCreateRequest request,
+            Long effectiveUserId
+    ) {
+        String owner = effectiveUserId != null
+                ? "user:" + effectiveUserId
+                : "guest:" + request.getGuestEmail().trim().toLowerCase() + ":" + request.getSessionId();
+
+        String sortedSeatIds = request.getSeatIds().stream()
+                .sorted()
+                .map(String::valueOf)
+                .reduce((left, right) -> left + "," + right)
+                .orElse("");
+
+        return sha256Hex(owner
+                + "|showtime:" + request.getShowtimeId()
+                + "|seats:" + sortedSeatIds);
+    }
+
+    private String buildStripeIdempotencyKey(CheckoutSession checkoutSession) {
+        if (checkoutSession.getIdempotencyKey() == null || checkoutSession.getIdempotencyKey().isBlank()) {
+            return null;
+        }
+
+        String owner = checkoutSession.getUser() != null
+                ? "user:" + checkoutSession.getUser().getId()
+                : "guest:" + checkoutSession.getGuestEmail().trim().toLowerCase()
+                        + ":" + checkoutSession.getGuestSessionId();
+
+        return "checkout-session-" + sha256Hex(owner + "|" + checkoutSession.getIdempotencyKey());
+    }
+
+    private String sha256Hex(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not build idempotency fingerprint", e);
+        }
     }
 
     private String buildItemsSnapshotJson(List<Seat> seats) {

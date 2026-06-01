@@ -53,6 +53,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import com.example.moviereservation.dto.StripeCheckoutCompletedEvent;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -179,7 +183,7 @@ public class CheckoutIntegrationTest {
         user = userRepository.save(user);
 
         // Mock the StripeCheckoutService to return a predictable result for any checkout session creation
-        when(stripeCheckoutService.createHostedCheckoutSession(any()))
+        when(stripeCheckoutService.createHostedCheckoutSession(any(), nullable(String.class)))
         .thenAnswer(invocation -> {
             CheckoutSession checkoutSession = invocation.getArgument(0);
             return new StripeCheckoutSessionResult(
@@ -1605,6 +1609,226 @@ public class CheckoutIntegrationTest {
                         
 
                 assertThat(reservationRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void guestCheckoutSessionRetryWithSameIdempotencyKeyReturnsSameSession() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+                String body = """
+                        {
+                        "showtimeId": %d,
+                        "seatIds": [%d],
+                        "guestEmail": "%s",
+                        "sessionId": "%s"
+                        }
+                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId);
+
+                clearInvocations(stripeCheckoutService);
+
+                JsonNode firstResponse = objectMapper.readTree(
+                        mockMvc.perform(post("/checkout/session")
+                                        .header("Idempotency-Key", "guest-retry-key")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(body))
+                                .andExpect(status().isOk())
+                                .andReturn()
+                                .getResponse()
+                                .getContentAsString()
+                );
+
+                JsonNode retryResponse = objectMapper.readTree(
+                        mockMvc.perform(post("/checkout/session")
+                                        .header("Idempotency-Key", "guest-retry-key")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(body))
+                                .andExpect(status().isOk())
+                                .andReturn()
+                                .getResponse()
+                                .getContentAsString()
+                );
+
+                assertThat(retryResponse.get("checkoutReference").asString())
+                        .isEqualTo(firstResponse.get("checkoutReference").asString());
+                assertThat(retryResponse.get("stripeCheckoutSessionId").asString())
+                        .isEqualTo(firstResponse.get("stripeCheckoutSessionId").asString());
+                assertThat(retryResponse.get("checkoutUrl").asString())
+                        .isEqualTo(firstResponse.get("checkoutUrl").asString());
+                assertThat(checkoutSessionRepository.findAll()).hasSize(1);
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(checkoutSession.getIdempotencyKey()).isEqualTo("guest-retry-key");
+                assertThat(checkoutSession.getIdempotencyRequestFingerprint()).isNotBlank();
+                verify(stripeCheckoutService, times(1))
+                        .createHostedCheckoutSession(any(CheckoutSession.class), any());
+        }
+
+        @Test
+        void authenticatedCheckoutSessionRetryWithSameIdempotencyKeyReturnsSameSession() throws Exception {
+                String token = loginAndGetToken("jay@example.com", "password");
+
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d]
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId())))
+                        .andExpect(status().isOk());
+
+                String body = """
+                        {
+                        "showtimeId": %d,
+                        "seatIds": [%d]
+                        }
+                        """.formatted(showtime.getId(), seat1.getId());
+
+                JsonNode firstResponse = objectMapper.readTree(
+                        mockMvc.perform(post("/checkout/session")
+                                        .header("Authorization", "Bearer " + token)
+                                        .header("Idempotency-Key", "auth-retry-key")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(body))
+                                .andExpect(status().isOk())
+                                .andReturn()
+                                .getResponse()
+                                .getContentAsString()
+                );
+
+                JsonNode retryResponse = objectMapper.readTree(
+                        mockMvc.perform(post("/checkout/session")
+                                        .header("Authorization", "Bearer " + token)
+                                        .header("Idempotency-Key", "auth-retry-key")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(body))
+                                .andExpect(status().isOk())
+                                .andReturn()
+                                .getResponse()
+                                .getContentAsString()
+                );
+
+                assertThat(retryResponse.get("checkoutReference").asString())
+                        .isEqualTo(firstResponse.get("checkoutReference").asString());
+                assertThat(checkoutSessionRepository.findAll()).hasSize(1);
+                assertThat(checkoutSessionRepository.findAll().getFirst().getUser().getId()).isEqualTo(user.getId());
+        }
+
+        @Test
+        void checkoutSessionRejectsSameIdempotencyKeyForDifferentRequest() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId(), seat2.getId()).get("sessionId").asString();
+
+                mockMvc.perform(post("/checkout/session")
+                                .header("Idempotency-Key", "same-key-different-request")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk());
+
+                mockMvc.perform(post("/checkout/session")
+                                .header("Idempotency-Key", "same-key-different-request")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat2.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.message").value("Idempotency-Key was already used for a different checkout session request"));
+
+                assertThat(checkoutSessionRepository.findAll()).hasSize(1);
+        }
+
+        @Test
+        void sameIdempotencyKeyCanBeUsedByDifferentGuestOwners() throws Exception {
+                String firstGuestEmail = "first@example.com";
+                String firstSessionId = lockAsGuest(firstGuestEmail, seat1.getId()).get("sessionId").asString();
+
+                mockMvc.perform(post("/checkout/session")
+                                .header("Idempotency-Key", "shared-raw-key")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), firstGuestEmail, firstSessionId)))
+                        .andExpect(status().isOk());
+
+                String secondGuestEmail = "second@example.com";
+                String secondSessionId = lockAsGuest(secondGuestEmail, seat2.getId()).get("sessionId").asString();
+
+                mockMvc.perform(post("/checkout/session")
+                                .header("Idempotency-Key", "shared-raw-key")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat2.getId(), secondGuestEmail, secondSessionId)))
+                        .andExpect(status().isOk());
+
+                assertThat(checkoutSessionRepository.findAll()).hasSize(2);
+        }
+
+        @Test
+        void checkoutSessionRejectsBlankIdempotencyKey() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                mockMvc.perform(post("/checkout/session")
+                                .header("Idempotency-Key", "   ")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.message").value("Idempotency-Key must not be blank"));
+
+                assertThat(checkoutSessionRepository.findAll()).isEmpty();
+        }
+
+        @Test
+        void checkoutSessionRejectsTooLongIdempotencyKey() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                mockMvc.perform(post("/checkout/session")
+                                .header("Idempotency-Key", "x".repeat(256))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.message").value("Idempotency-Key must not exceed 255 characters"));
+
+                assertThat(checkoutSessionRepository.findAll()).isEmpty();
         }
 
         @Test

@@ -17,10 +17,12 @@ export function lockSeats(
 }
 
 export function createCheckoutSession(
-  data: CheckoutSessionCreateRequest
+  data: CheckoutSessionCreateRequest,
+  idempotencyKey?: string
 ): Promise<CheckoutSessionCreateResponse> {
   return clientFetch<CheckoutSessionCreateResponse>("/checkout/session", {
     method: "POST",
+    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
     body: JSON.stringify(data),
   });
 }

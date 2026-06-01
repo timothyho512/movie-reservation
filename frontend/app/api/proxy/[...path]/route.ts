@@ -16,6 +16,10 @@ async function proxy(request: NextRequest, params: Promise<{ path: string[] }>) 
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
+  const idempotencyKey = request.headers.get("Idempotency-Key");
+  if (idempotencyKey) {
+    headers["Idempotency-Key"] = idempotencyKey;
+  }
 
   // Forward search params
   const url = new URL(request.url);

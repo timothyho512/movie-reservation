@@ -50,6 +50,18 @@ public class GlobalExceptionHandler {
         );
     }
 
+    @ExceptionHandler(IdempotencyConflictException.class)
+    public ResponseEntity<ApiError> handleIdempotencyConflict(
+            IdempotencyConflictException ex,
+            HttpServletRequest request
+    ) {
+        return buildErrorResponse(
+                HttpStatus.CONFLICT,
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+    }
+
     @ExceptionHandler(CheckoutExpiredException.class)
     public ResponseEntity<ApiError> handleCheckoutExpired(
                 CheckoutExpiredException ex,

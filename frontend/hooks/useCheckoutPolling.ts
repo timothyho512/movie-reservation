@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getCheckoutStatus } from "@/lib/api/checkout";
 import { queryKeys } from "@/lib/query-keys";
@@ -16,7 +16,25 @@ const TERMINAL_STATUSES: CheckoutSessionStatus[] = [
 const POLL_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
 export function useCheckoutPolling(checkoutReference: string | null) {
-  const startedAt = useRef(Date.now());
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [now, setNow] = useState<number | null>(null);
+
+  useEffect(() => {
+    const resetId = window.setTimeout(() => {
+      const timestamp = checkoutReference ? Date.now() : null;
+      setStartedAt(timestamp);
+      setNow(timestamp);
+    }, 0);
+
+    const intervalId = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearTimeout(resetId);
+      window.clearInterval(intervalId);
+    };
+  }, [checkoutReference]);
 
   const query = useQuery({
     queryKey: queryKeys.checkout.status(checkoutReference ?? ""),
@@ -25,7 +43,7 @@ export function useCheckoutPolling(checkoutReference: string | null) {
     refetchInterval: (q) => {
       const status = q.state.data?.status;
       if (status && TERMINAL_STATUSES.includes(status)) return false;
-      if (Date.now() - startedAt.current >= POLL_TIMEOUT_MS) return false;
+      if (startedAt && now && now - startedAt >= POLL_TIMEOUT_MS) return false;
       return 2000;
     },
     refetchIntervalInBackground: false,
@@ -34,7 +52,9 @@ export function useCheckoutPolling(checkoutReference: string | null) {
   const isTimedOut =
     !query.data ||
     (!TERMINAL_STATUSES.includes(query.data.status) &&
-      Date.now() - startedAt.current >= POLL_TIMEOUT_MS);
+      !!startedAt &&
+      !!now &&
+      now - startedAt >= POLL_TIMEOUT_MS);
 
   return { ...query, isTimedOut };
 }
