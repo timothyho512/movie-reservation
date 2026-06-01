@@ -1,0 +1,12 @@
+@startuml
+title Outbox publish retry with RabbitMQ
+
+[*] --> PENDING
+PENDING --> PROCESSING: scheduler claims due event
+FAILED --> PROCESSING: nextAttemptAt reached\nattemptCount < maxAttempts
+PROCESSING --> PUBLISHED: RabbitMQ publish succeeds
+PROCESSING --> FAILED: RabbitMQ publish fails\nincrement attemptCount
+FAILED --> FAILED: max attempts reached\nmanual intervention
+PUBLISHED --> [*]
+
+@enduml

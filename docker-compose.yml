@@ -18,6 +18,16 @@ services:
       - "6379:6379"
     command: ["redis-server", "--appendonly", "no"]
 
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: movie-reservation-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-movie_reservation_user}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-movie_reservation_pass}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
   test-db:
     image: postgres:16
     container_name: movie-reservation-test-db

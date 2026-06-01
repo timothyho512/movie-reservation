@@ -172,7 +172,11 @@ Current events:
 - `CheckoutPaymentFinalized`
 - `CheckoutSessionExpired`
 
-The V1 publisher is a log/stub implementation. A scheduled worker polls due outbox rows, marks them `PROCESSING`, publishes them, then marks them `PUBLISHED` or `FAILED`. Failed rows are retried until their max attempt count is reached.
+The publisher sends due outbox events to RabbitMQ. A scheduled worker polls due outbox rows, marks them `PROCESSING`, publishes them to the `movie-reservation.events` topic exchange, then marks them `PUBLISHED` or `FAILED`. Failed rows are retried until their max attempt count is reached.
+
+The first async consumer logs booking email work. Real email delivery is intentionally outside the first RabbitMQ integration.
+
+See `docs/async/rabbitmq-outbox-async-work.md` for the broker-level design.
 
 This is internal backend behavior. It does not change request/response shapes for checkout, reservation, or webhook endpoints.
 

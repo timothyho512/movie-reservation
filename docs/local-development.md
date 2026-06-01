@@ -28,14 +28,14 @@ STRIPE_WEBHOOK_SECRET=whsec_replace_me
 Docker Compose automatically reads `.env` for variable substitution.
 
 ```sh
-docker compose up -d db test-db redis
+docker compose up -d db test-db redis rabbitmq
 ```
 
-The main development database is available at `localhost:5433`. The test database is available at `localhost:5434`. Redis is available at `localhost:6379`.
+The main development database is available at `localhost:5433`. The test database is available at `localhost:5434`. Redis is available at `localhost:6379`. RabbitMQ is available at `localhost:5672`, and the management UI is available at `http://localhost:15672`.
 
 Redis stores active temporary seat holds and short-lived seat-map cache entries. Postgres remains the source of truth for confirmed reservations, checkout sessions, and audit/history rows.
 
-The backend also runs a scheduled transactional outbox worker locally. In V1 it publishes outbox events through a log/stub publisher, so no broker or email service is required for local development.
+The backend also runs a scheduled transactional outbox worker locally. It publishes due outbox events to RabbitMQ, where the first async worker logs booking email work without calling a real email provider.
 
 ## Start the backend
 
@@ -66,7 +66,7 @@ If your local database already has older demo data and you want a clean reseed:
 
 ```sh
 docker compose down -v
-docker compose up -d db test-db redis
+docker compose up -d db test-db redis rabbitmq
 ```
 
 ## Start Stripe webhook forwarding

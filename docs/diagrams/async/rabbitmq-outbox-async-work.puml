@@ -1,0 +1,27 @@
+@startuml
+title RabbitMQ async work after payment webhook
+
+actor Stripe
+participant "StripeWebhookController" as Webhook
+participant "CheckoutSessionService" as Checkout
+database "Postgres" as DB
+participant "OutboxEventScheduler" as Scheduler
+participant "OutboxEventProcessor" as Processor
+queue "RabbitMQ\nmovie-reservation.events" as Rabbit
+participant "BookingEmailConsumer" as Email
+
+Stripe -> Webhook: checkout.session.completed
+Webhook -> Checkout: finalize payment
+Checkout -> DB: update checkout/reservation\ninsert outbox_events row
+DB --> Checkout: commit
+Checkout --> Webhook: success
+Webhook --> Stripe: 2xx
+
+Scheduler -> Processor: processDueEvents()
+Processor -> DB: claim due outbox events
+Processor -> Rabbit: publish payload + headers
+Rabbit -> Email: route to movie-reservation.email
+Email -> Email: log would-send email
+Processor -> DB: mark PUBLISHED
+
+@enduml
