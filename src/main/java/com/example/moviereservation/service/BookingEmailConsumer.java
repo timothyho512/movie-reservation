@@ -13,13 +13,45 @@ import org.springframework.stereotype.Component;
 public class BookingEmailConsumer {
 
     private static final Logger logger = LoggerFactory.getLogger(BookingEmailConsumer.class);
+    static final String CONSUMER_NAME = "booking-email";
+
+    private final ConsumerIdempotencyService consumerIdempotencyService;
+
+    public BookingEmailConsumer(ConsumerIdempotencyService consumerIdempotencyService) {
+        this.consumerIdempotencyService = consumerIdempotencyService;
+    }
 
     @RabbitListener(queues = RabbitMqOutboxConfig.EMAIL_QUEUE)
     public void handleEmailEvent(
             String payload,
+            @Header(name = "eventId", required = false) Long eventId,
             @Header(name = "eventType", required = false) String eventType,
             @Header(name = "aggregateId", required = false) String aggregateId
     ) {
+        if (eventId == null) {
+            logger.warn(
+                    "Processing email event without idempotency because eventId header is missing eventType={} aggregateId={}",
+                    eventType,
+                    aggregateId
+            );
+            processEmailEvent(payload, eventType, aggregateId);
+            return;
+        }
+
+        if (!consumerIdempotencyService.tryStartProcessing(eventId, CONSUMER_NAME)) {
+            logger.info(
+                    "Skipping duplicate email event eventId={} eventType={} aggregateId={}",
+                    eventId,
+                    eventType,
+                    aggregateId
+            );
+            return;
+        }
+
+        processEmailEvent(payload, eventType, aggregateId);
+    }
+
+    private void processEmailEvent(String payload, String eventType, String aggregateId) {
         logger.info(
                 "Would send booking email for eventType={} aggregateId={} payload={}",
                 eventType,
