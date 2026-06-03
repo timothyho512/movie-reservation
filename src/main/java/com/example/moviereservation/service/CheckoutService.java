@@ -7,6 +7,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.example.moviereservation.dto.CheckoutLockRequest;
 import com.example.moviereservation.dto.CheckoutLockResponse;
+import com.example.moviereservation.entity.CheckoutLockIdempotencyKey;
+import com.example.moviereservation.entity.CheckoutLockIdempotencyStatus;
 import com.example.moviereservation.entity.Seat;
 import com.example.moviereservation.entity.SeatLock;
 import com.example.moviereservation.entity.Showtime;
@@ -20,8 +22,11 @@ import com.example.moviereservation.repository.UserRepository;
 import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.repository.CheckoutSessionRepository;
+import com.example.moviereservation.repository.CheckoutLockIdempotencyKeyRepository;
 import com.example.moviereservation.repository.ReservationRepository;
 import com.example.moviereservation.repository.SeatLockRepository;
+import com.example.moviereservation.Exception.CheckoutExpiredException;
+import com.example.moviereservation.Exception.IdempotencyConflictException;
 import com.example.moviereservation.Exception.ResourceNotFoundException;
 import com.example.moviereservation.Exception.SeatUnavailableException;
 import com.example.moviereservation.dto.CheckoutConfirmRequest;
@@ -32,8 +37,12 @@ import com.example.moviereservation.dto.CancelLockResponse;
 
 import com.example.moviereservation.security.CustomUserPrincipal;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.UUID;
 
 
 @Service
@@ -53,12 +62,14 @@ public class CheckoutService {
 
     private final CheckoutSessionRepository checkoutSessionRepository;
 
+    private final CheckoutLockIdempotencyKeyRepository checkoutLockIdempotencyKeyRepository;
+
     private final RedisSeatLockService redisSeatLockService;
 
     private final RedisSeatMapCacheService redisSeatMapCacheService;
 
 
-    public CheckoutService(ShowtimeRepository showtimeRepository, SeatRepository seatRepository, ReservationRepository reservationRepository, SeatLockRepository seatLockRepository, UserRepository userRepository, ReservationService reservationService, StripeCheckoutService stripeCheckoutService, CheckoutSessionRepository checkoutSessionRepository, RedisSeatLockService redisSeatLockService, RedisSeatMapCacheService redisSeatMapCacheService) {
+    public CheckoutService(ShowtimeRepository showtimeRepository, SeatRepository seatRepository, ReservationRepository reservationRepository, SeatLockRepository seatLockRepository, UserRepository userRepository, ReservationService reservationService, StripeCheckoutService stripeCheckoutService, CheckoutSessionRepository checkoutSessionRepository, CheckoutLockIdempotencyKeyRepository checkoutLockIdempotencyKeyRepository, RedisSeatLockService redisSeatLockService, RedisSeatMapCacheService redisSeatMapCacheService) {
         this.showtimeRepository = showtimeRepository;
         this.seatRepository = seatRepository;
         this.reservationRepository = reservationRepository;
@@ -66,6 +77,7 @@ public class CheckoutService {
         this.userRepository = userRepository;
         this.reservationService = reservationService;
         this.checkoutSessionRepository = checkoutSessionRepository;
+        this.checkoutLockIdempotencyKeyRepository = checkoutLockIdempotencyKeyRepository;
         this.redisSeatLockService = redisSeatLockService;
         this.redisSeatMapCacheService = redisSeatMapCacheService;
     }
@@ -75,6 +87,16 @@ public class CheckoutService {
     // all happen inside one service transaction
     @Transactional
     public CheckoutLockResponse lockSeats(CheckoutLockRequest request, CustomUserPrincipal principal) {
+        return lockSeats(request, principal, null);
+    }
+
+    @Transactional
+    public CheckoutLockResponse lockSeats(
+            CheckoutLockRequest request,
+            CustomUserPrincipal principal,
+            String idempotencyKey
+    ) {
+        String normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
         Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
         // Validate request (showtimeId, seatIds, guest/auth identity)
         validateCheckoutLockRequest(request, effectiveUserId);
@@ -83,16 +105,72 @@ public class CheckoutService {
 
         String guestEmail = principal != null ? null : request.getGuestEmail();
 
-        // Check if seats are available for the showtime
-        validateSeatsAvailable(context.getShowtime(), context.getSeats());
+        String requestFingerprint = normalizedIdempotencyKey == null
+                ? null
+                : buildLockRequestFingerprint(request, effectiveUserId, guestEmail);
 
-        RedisSeatLockOwner owner = buildRedisOwnerForLock(context.getUser(), guestEmail);
-        RedisSeatLockBatch lockBatch = createLock(context.getShowtime(), context.getSeats(), owner);
+        CheckoutLockIdempotencyKey lockIdempotencyKey = null;
+
+        if (normalizedIdempotencyKey != null) {
+            lockIdempotencyKey = findExistingLockIdempotencyKey(
+                    normalizedIdempotencyKey,
+                    effectiveUserId,
+                    guestEmail
+            );
+
+            if (lockIdempotencyKey != null) {
+                validateLockIdempotencyFingerprint(lockIdempotencyKey, requestFingerprint);
+                CheckoutLockResponse replayResponse = buildCompletedLockResponseFromIdempotencyKey(lockIdempotencyKey);
+                if (replayResponse != null) {
+                    return replayResponse;
+                }
+            } else {
+                lockIdempotencyKey = createStartedLockIdempotencyKey(
+                        normalizedIdempotencyKey,
+                        requestFingerprint,
+                        context,
+                        guestEmail
+                );
+            }
+        }
+
+        // Redis createLocks is the active lock authority and can recover same-owner retries.
+        validateSeatsNotReserved(context.getShowtime(), context.getSeats());
+
+        RedisSeatLockOwner owner = buildRedisOwnerForLock(context.getUser(), guestEmail, lockIdempotencyKey);
+        RedisSeatLockBatch lockBatch;
+        try {
+            lockBatch = createLock(context.getShowtime(), context.getSeats(), owner);
+        } catch (RuntimeException e) {
+            markLockIdempotencyFailed(lockIdempotencyKey, e);
+            throw e;
+        }
+
         createAuditLocks(context.getUser(), guestEmail, context.getShowtime(), context.getSeats(), lockBatch);
+        CheckoutLockResponse response = buildLockResponse(lockBatch);
+        completeLockIdempotencyKey(lockIdempotencyKey, response);
+
         redisSeatMapCacheService.evict(context.getShowtime().getId());
 
         // Return lock details (sessionId, expiresAt, lockedSeatIds) to the client
-        return buildLockResponse(lockBatch);
+        return response;
+    }
+
+    private String normalizeIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null) {
+            return null;
+        }
+
+        String trimmed = idempotencyKey.trim();
+        if (trimmed.isBlank()) {
+            throw new IllegalArgumentException("Idempotency-Key must not be blank");
+        }
+
+        if (trimmed.length() > 255) {
+            throw new IllegalArgumentException("Idempotency-Key must not exceed 255 characters");
+        }
+
+        return trimmed;
     }
 
     @Transactional
@@ -262,6 +340,15 @@ public class CheckoutService {
         // If any seat is not available, throw an exception with details about which seats are unavailable
     }
 
+    private void validateSeatsNotReserved(Showtime showtime, List<Seat> seats) {
+        for (Seat seat : seats) {
+            boolean isReserved = reservationRepository.existsReservedSeatForShowtime(showtime.getId(), seat.getId());
+            if (isReserved) {
+                throw new SeatUnavailableException("Seat " + seat.getId() + " is already reserved for this showtime");
+            }
+        }
+    }
+
     private void validateSeatsBelongToShowtime(Showtime showtime, List<Seat> seats) {
         // checks that all seatIds in the request belong to the same showtimeId
         // this is equivalent to checking if they have the same screenId
@@ -332,6 +419,13 @@ public class CheckoutService {
             RedisSeatLockBatch lockBatch
     ) {
         List<SeatLock> locks = seats.stream()
+                .filter(seat -> !seatLockRepository.existsActiveLockForOwner(
+                        showtime.getId(),
+                        seat.getId(),
+                        user != null ? user.getId() : null,
+                        lockBatch.sessionId(),
+                        guestEmail
+                ))
                 .map(seat -> {
                     SeatLock seatLock = new SeatLock();
                     seatLock.setShowtime(showtime);
@@ -348,6 +442,10 @@ public class CheckoutService {
                     return seatLock;
                 })
                 .toList();
+
+        if (locks.isEmpty()) {
+            return;
+        }
 
         try {
             seatLockRepository.saveAll(locks);
@@ -394,9 +492,17 @@ public class CheckoutService {
         return new CheckoutLockResponse(lockBatch.sessionId(), lockBatch.expiresAt(), lockBatch.lockedSeatIds(), "Seats locked successfully");
     }
 
-    private RedisSeatLockOwner buildRedisOwnerForLock(User user, String guestEmail) {
+    private RedisSeatLockOwner buildRedisOwnerForLock(
+            User user,
+            String guestEmail,
+            CheckoutLockIdempotencyKey lockIdempotencyKey
+    ) {
         if (user != null) {
             return redisSeatLockService.authenticatedOwner(user.getId());
+        }
+
+        if (lockIdempotencyKey != null) {
+            return redisSeatLockService.guestOwner(lockIdempotencyKey.getSessionId(), guestEmail);
         }
 
         return redisSeatLockService.guestOwner(guestEmail);
@@ -431,6 +537,158 @@ public class CheckoutService {
         }
 
         checkoutSessionRepository.cancelPendingSessionsForGuest(showtime.getId(), sessionId, guestEmail);
+    }
+
+    private CheckoutLockIdempotencyKey findExistingLockIdempotencyKey(
+            String idempotencyKey,
+            Long effectiveUserId,
+            String guestEmail
+    ) {
+        if (effectiveUserId != null) {
+            return checkoutLockIdempotencyKeyRepository
+                    .findFirstByUserIdAndIdempotencyKey(effectiveUserId, idempotencyKey)
+                    .orElse(null);
+        }
+
+        return checkoutLockIdempotencyKeyRepository
+                .findFirstByGuestEmailAndIdempotencyKey(guestEmail.trim().toLowerCase(), idempotencyKey)
+                .orElse(null);
+    }
+
+    private void validateLockIdempotencyFingerprint(
+            CheckoutLockIdempotencyKey existingKey,
+            String requestFingerprint
+    ) {
+        if (!requestFingerprint.equals(existingKey.getRequestFingerprint())) {
+            throw new IdempotencyConflictException(
+                    "Idempotency-Key was already used for a different checkout lock request"
+            );
+        }
+    }
+
+    private CheckoutLockResponse buildCompletedLockResponseFromIdempotencyKey(
+            CheckoutLockIdempotencyKey existingKey
+    ) {
+        if (existingKey.getStatus() != CheckoutLockIdempotencyStatus.COMPLETED) {
+            return null;
+        }
+
+        if (LocalDateTime.now().isAfter(existingKey.getExpiresAt())) {
+            throw new CheckoutExpiredException("Checkout lock idempotency key has expired");
+        }
+
+        return new CheckoutLockResponse(
+                existingKey.getSessionId(),
+                existingKey.getExpiresAt(),
+                parseLockedSeatIds(existingKey.getLockedSeatIds()),
+                "Seats locked successfully"
+        );
+    }
+
+    private CheckoutLockIdempotencyKey createStartedLockIdempotencyKey(
+            String idempotencyKey,
+            String requestFingerprint,
+            CheckoutContext context,
+            String guestEmail
+    ) {
+        CheckoutLockIdempotencyKey lockIdempotencyKey = new CheckoutLockIdempotencyKey();
+        lockIdempotencyKey.setIdempotencyKey(idempotencyKey);
+        lockIdempotencyKey.setOwnerType(context.getUser() != null ? "USER" : "GUEST");
+        lockIdempotencyKey.setUser(context.getUser());
+        lockIdempotencyKey.setGuestEmail(guestEmail != null ? guestEmail.trim().toLowerCase() : null);
+        lockIdempotencyKey.setRequestFingerprint(requestFingerprint);
+        lockIdempotencyKey.setStatus(CheckoutLockIdempotencyStatus.STARTED);
+        lockIdempotencyKey.setShowtime(context.getShowtime());
+        if (context.getUser() == null) {
+            lockIdempotencyKey.setSessionId(UUID.randomUUID().toString());
+        }
+
+        return checkoutLockIdempotencyKeyRepository.save(lockIdempotencyKey);
+    }
+
+    private void completeLockIdempotencyKey(
+            CheckoutLockIdempotencyKey lockIdempotencyKey,
+            CheckoutLockResponse response
+    ) {
+        if (lockIdempotencyKey == null) {
+            return;
+        }
+
+        lockIdempotencyKey.setStatus(CheckoutLockIdempotencyStatus.COMPLETED);
+        lockIdempotencyKey.setSessionId(response.getSessionId());
+        lockIdempotencyKey.setExpiresAt(response.getExpiresAt());
+        lockIdempotencyKey.setLockedSeatIds(writeLockedSeatIds(response.getLockedSeatIds()));
+        lockIdempotencyKey.setLastError(null);
+
+        checkoutLockIdempotencyKeyRepository.save(lockIdempotencyKey);
+    }
+
+    private void markLockIdempotencyFailed(
+            CheckoutLockIdempotencyKey lockIdempotencyKey,
+            RuntimeException exception
+    ) {
+        if (lockIdempotencyKey == null) {
+            return;
+        }
+
+        lockIdempotencyKey.setStatus(CheckoutLockIdempotencyStatus.FAILED);
+        lockIdempotencyKey.setLastError(truncateError(exception));
+        checkoutLockIdempotencyKeyRepository.save(lockIdempotencyKey);
+    }
+
+    private String truncateError(RuntimeException exception) {
+        String message = exception.getMessage() != null
+                ? exception.getMessage()
+                : exception.getClass().getName();
+        return message.length() <= 2000 ? message : message.substring(0, 2000);
+    }
+
+    private String buildLockRequestFingerprint(
+            CheckoutLockRequest request,
+            Long effectiveUserId,
+            String guestEmail
+    ) {
+        String owner = effectiveUserId != null
+                ? "user:" + effectiveUserId
+                : "guest:" + guestEmail.trim().toLowerCase();
+
+        String sortedSeatIds = request.getSeatIds().stream()
+                .sorted()
+                .map(String::valueOf)
+                .reduce((left, right) -> left + "," + right)
+                .orElse("");
+
+        return sha256Hex(owner
+                + "|showtime:" + request.getShowtimeId()
+                + "|seats:" + sortedSeatIds);
+    }
+
+    private String writeLockedSeatIds(List<Long> lockedSeatIds) {
+        return lockedSeatIds.stream()
+                .sorted()
+                .map(String::valueOf)
+                .reduce((left, right) -> left + "," + right)
+                .orElse("");
+    }
+
+    private List<Long> parseLockedSeatIds(String lockedSeatIdsJson) {
+        if (lockedSeatIdsJson == null || lockedSeatIdsJson.isBlank()) {
+            return List.of();
+        }
+
+        return List.of(lockedSeatIdsJson.split(",")).stream()
+                .map(Long::parseLong)
+                .sorted()
+                .toList();
+    }
+
+    private String sha256Hex(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not build idempotency fingerprint", e);
+        }
     }
 
 

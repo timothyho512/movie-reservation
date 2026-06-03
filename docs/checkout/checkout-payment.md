@@ -40,6 +40,18 @@ Copy the printed `whsec_...` value into `.env` as `STRIPE_WEBHOOK_SECRET`, then 
 
 Creates temporary Redis seat holds and writes legacy Postgres `seat_locks` audit rows.
 
+Clients should send one stable `Idempotency-Key` header per lock attempt:
+
+```http
+Idempotency-Key: lock-attempt-abc-123
+```
+
+If the frontend retries the same lock request after a timeout, the backend
+returns the original lock response, including the guest `sessionId`. If the
+same key is reused for a different showtime, seat selection, or checkout owner,
+the backend returns `409 Conflict`. If the original lock attempt has expired,
+the backend returns `410 Gone`.
+
 Guest request:
 
 ```json

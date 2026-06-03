@@ -8,10 +8,12 @@ import {
 } from "@/types/api";
 
 export function lockSeats(
-  data: CheckoutLockRequest
+  data: CheckoutLockRequest,
+  idempotencyKey?: string
 ): Promise<CheckoutLockResponse> {
   return clientFetch<CheckoutLockResponse>("/checkout/lock", {
     method: "POST",
+    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
     body: JSON.stringify(data),
   });
 }

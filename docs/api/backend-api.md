@@ -392,13 +392,13 @@ Auth: optional
 Optional header:
 
 ```http
-Idempotency-Key: checkout-attempt-abc-123
+Idempotency-Key: lock-attempt-abc-123
 ```
 
-When provided, retries for the same owner and same request body return the
-original checkout session response instead of creating another Stripe Checkout
-Session. Reusing the same key with different showtime, seats, or owner identity
-returns `409 Conflict`.
+When provided, retries for the same owner and same lock request return the
+original lock response, including the guest `sessionId`. Reusing the same key
+with different showtime, seats, or owner identity returns `409 Conflict`. If the
+stored lock attempt has expired, retrying the key returns `410 Gone`.
 
 Request:
 
@@ -431,6 +431,17 @@ canonical real-payment entry point.
 All requested seats must still have active Redis holds owned by the caller.
 
 Auth: optional
+
+Optional header:
+
+```http
+Idempotency-Key: checkout-attempt-abc-123
+```
+
+When provided, retries for the same owner and same request body return the
+original checkout session response instead of creating another Stripe Checkout
+Session. Reusing the same key with different showtime, seats, or owner identity
+returns `409 Conflict`.
 
 Request:
 

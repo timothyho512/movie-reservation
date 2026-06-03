@@ -8,6 +8,27 @@ import org.springframework.data.repository.query.Param;
 import com.example.moviereservation.entity.SeatLock;
 
 public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
+
+    @Query("""
+        SELECT CASE WHEN COUNT(sl) > 0 THEN true ELSE false END
+        FROM SeatLock sl
+        WHERE sl.showtime.id = :showtimeId
+        AND sl.seat.id = :seatId
+        AND sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
+        AND sl.expiresAt > CURRENT_TIMESTAMP
+        AND (
+            (:userId IS NOT NULL AND sl.user.id = :userId)
+            OR
+            (:sessionId IS NOT NULL AND sl.sessionId = :sessionId AND sl.guestEmail = :guestEmail)
+        )
+    """)
+    boolean existsActiveLockForOwner(
+            @Param("showtimeId") Long showtimeId,
+            @Param("seatId") Long seatId,
+            @Param("userId") Long userId,
+            @Param("sessionId") String sessionId,
+            @Param("guestEmail") String guestEmail
+    );
     
     @Modifying
     @Query("""

@@ -48,29 +48,44 @@ public class RedisSeatLockService {
 
     public RedisSeatLockBatch createLocks(Long showtimeId, Collection<Long> seatIds, RedisSeatLockOwner owner) {
         LocalDateTime lockedAt = LocalDateTime.now();
-        LocalDateTime expiresAt = lockedAt.plusSeconds(seatLockProperties.getTtlSeconds());
+        LocalDateTime defaultExpiresAt = lockedAt.plusSeconds(seatLockProperties.getTtlSeconds());
         Duration ttl = Duration.ofSeconds(seatLockProperties.getTtlSeconds());
-        List<Long> acquiredSeatIds = new ArrayList<>();
+        List<Long> lockedSeatIds = new ArrayList<>();
+        List<Long> createdSeatIds = new ArrayList<>();
+        List<LocalDateTime> lockExpiries = new ArrayList<>();
 
         try {
             for (Long seatId : sortedDistinctSeatIds(seatIds)) {
-                RedisSeatLockValue value = RedisSeatLockValue.from(showtimeId, seatId, owner, lockedAt, expiresAt);
+                RedisSeatLockValue value = RedisSeatLockValue.from(showtimeId, seatId, owner, lockedAt, defaultExpiresAt);
                 Boolean created = redisTemplate.opsForValue()
                         .setIfAbsent(lockKey(showtimeId, seatId), serialize(value), ttl);
 
                 if (!Boolean.TRUE.equals(created)) {
-                    releaseLocks(showtimeId, acquiredSeatIds, owner);
+                    RedisSeatLockValue existingLock = readLock(showtimeId, seatId);
+                    if (existingLock != null && existingLock.isOwnedBy(owner)) {
+                        lockedSeatIds.add(seatId);
+                        lockExpiries.add(existingLock.expiresAt());
+                        continue;
+                    }
+
+                    releaseLocks(showtimeId, createdSeatIds, owner);
                     throw new SeatUnavailableException("Seat " + seatId + " is currently locked by another user for this showtime");
                 }
 
-                acquiredSeatIds.add(seatId);
+                lockedSeatIds.add(seatId);
+                createdSeatIds.add(seatId);
+                lockExpiries.add(defaultExpiresAt);
             }
 
-            return new RedisSeatLockBatch(owner.sessionId(), expiresAt, acquiredSeatIds);
+            LocalDateTime batchExpiresAt = lockExpiries.stream()
+                    .min(LocalDateTime::compareTo)
+                    .orElse(defaultExpiresAt);
+
+            return new RedisSeatLockBatch(owner.sessionId(), batchExpiresAt, lockedSeatIds);
         } catch (SeatUnavailableException e) {
             throw e;
         } catch (RuntimeException e) {
-            releaseLocks(showtimeId, acquiredSeatIds, owner);
+            releaseLocks(showtimeId, createdSeatIds, owner);
             throw e;
         }
     }

@@ -41,8 +41,11 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.example.moviereservation.entity.CheckoutSession;
+import com.example.moviereservation.entity.CheckoutLockIdempotencyKey;
+import com.example.moviereservation.entity.CheckoutLockIdempotencyStatus;
 import com.example.moviereservation.entity.CheckoutSessionStatus;
 import com.example.moviereservation.repository.CheckoutSessionRepository;
+import com.example.moviereservation.repository.CheckoutLockIdempotencyKeyRepository;
 import com.example.moviereservation.entity.CurrencyCode;
 
 import com.example.moviereservation.dto.StripeCheckoutSessionResult;
@@ -60,7 +63,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -113,6 +119,9 @@ public class CheckoutIntegrationTest {
     private CheckoutSessionRepository checkoutSessionRepository;
 
     @Autowired
+    private CheckoutLockIdempotencyKeyRepository checkoutLockIdempotencyKeyRepository;
+
+    @Autowired
     private OutboxEventRepository outboxEventRepository;
 
     @Autowired
@@ -137,6 +146,7 @@ public class CheckoutIntegrationTest {
         redisTemplate.getConnectionFactory().getConnection().serverCommands().flushDb();
         outboxEventRepository.deleteAll();
         checkoutSessionRepository.deleteAll();
+        checkoutLockIdempotencyKeyRepository.deleteAll();
         reservationRepository.deleteAll();
         seatLockRepository.deleteAll();
         seatRepository.deleteAll();
@@ -208,6 +218,241 @@ public class CheckoutIntegrationTest {
                 .allMatch(lock -> lock.getGuestEmail().equals("guest@example.com"))
                 .allMatch(lock -> lock.getSessionId() != null)
                 .allMatch(lock -> lock.getStatus() == LockStatus.LOCKED);
+    }
+
+    @Test
+    void guestLockRetryWithSameIdempotencyKeyReturnsSameSession() throws Exception {
+        String body = lockGuestBody(showtime.getId(), List.of(seat1.getId(), seat2.getId()), "guest@example.com");
+
+        JsonNode firstResponse = objectMapper.readTree(
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Idempotency-Key", "guest-lock-key")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString()
+        );
+
+        JsonNode retryResponse = objectMapper.readTree(
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Idempotency-Key", "guest-lock-key")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString()
+        );
+
+        assertThat(retryResponse.get("sessionId").asString())
+                .isEqualTo(firstResponse.get("sessionId").asString());
+        assertThat(retryResponse.get("expiresAt").asString())
+                .isEqualTo(firstResponse.get("expiresAt").asString());
+        assertThat(retryResponse.get("lockedSeatIds")).hasSize(2);
+        assertThat(seatLockRepository.findAll()).hasSize(2);
+        assertThat(checkoutLockIdempotencyKeyRepository.findAll()).hasSize(1);
+        assertThat(checkoutLockIdempotencyKeyRepository.findAll().getFirst().getStatus())
+                .isEqualTo(CheckoutLockIdempotencyStatus.COMPLETED);
+    }
+
+    @Test
+    void guestLockRetryRecoversStartedIdempotencyKeyBeforeRedisLock() throws Exception {
+        String guestEmail = "guest@example.com";
+        String sessionId = "stable-guest-session";
+        CheckoutLockIdempotencyKey idempotencyKey = new CheckoutLockIdempotencyKey();
+        idempotencyKey.setIdempotencyKey("started-before-redis");
+        idempotencyKey.setOwnerType("GUEST");
+        idempotencyKey.setGuestEmail(guestEmail);
+        idempotencyKey.setRequestFingerprint(lockFingerprint("guest:" + guestEmail, seat1.getId()));
+        idempotencyKey.setStatus(CheckoutLockIdempotencyStatus.STARTED);
+        idempotencyKey.setShowtime(showtime);
+        idempotencyKey.setSessionId(sessionId);
+        checkoutLockIdempotencyKeyRepository.save(idempotencyKey);
+
+        JsonNode response = objectMapper.readTree(
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Idempotency-Key", "started-before-redis")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), guestEmail)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString()
+        );
+
+        assertThat(response.get("sessionId").asString()).isEqualTo(sessionId);
+        CheckoutLockIdempotencyKey completedKey = checkoutLockIdempotencyKeyRepository.findAll().getFirst();
+        assertThat(completedKey.getStatus()).isEqualTo(CheckoutLockIdempotencyStatus.COMPLETED);
+        assertThat(completedKey.getExpiresAt()).isNotNull();
+        assertThat(seatLockRepository.findAll()).hasSize(1);
+    }
+
+    @Test
+    void guestLockRetryRecoversStartedIdempotencyKeyAfterRedisLock() throws Exception {
+        String body = lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com");
+
+        JsonNode firstResponse = objectMapper.readTree(
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Idempotency-Key", "started-after-redis")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString()
+        );
+
+        CheckoutLockIdempotencyKey idempotencyKey = checkoutLockIdempotencyKeyRepository.findAll().getFirst();
+        idempotencyKey.setStatus(CheckoutLockIdempotencyStatus.STARTED);
+        idempotencyKey.setExpiresAt(null);
+        idempotencyKey.setLockedSeatIds(null);
+        checkoutLockIdempotencyKeyRepository.save(idempotencyKey);
+
+        JsonNode retryResponse = objectMapper.readTree(
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Idempotency-Key", "started-after-redis")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString()
+        );
+
+        assertThat(retryResponse.get("sessionId").asString())
+                .isEqualTo(firstResponse.get("sessionId").asString());
+        assertThat(retryResponse.get("expiresAt").asString())
+                .isEqualTo(firstResponse.get("expiresAt").asString());
+        assertThat(seatLockRepository.findAll()).hasSize(1);
+        CheckoutLockIdempotencyKey completedKey = checkoutLockIdempotencyKeyRepository.findAll().getFirst();
+        assertThat(completedKey.getStatus()).isEqualTo(CheckoutLockIdempotencyStatus.COMPLETED);
+        assertThat(completedKey.getLockedSeatIds()).isEqualTo(seat1.getId().toString());
+    }
+
+    @Test
+    void authenticatedLockRetryWithSameIdempotencyKeyReturnsSameResponse() throws Exception {
+        String token = loginAndGetToken("jay@example.com", "password");
+        String body = """
+                {
+                "showtimeId": %d,
+                "seatIds": [%d]
+                }
+                """.formatted(showtime.getId(), seat1.getId());
+
+        JsonNode firstResponse = objectMapper.readTree(
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .header("Idempotency-Key", "auth-lock-key")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString()
+        );
+
+        JsonNode retryResponse = objectMapper.readTree(
+                mockMvc.perform(post("/checkout/lock")
+                                .header("Authorization", "Bearer " + token)
+                                .header("Idempotency-Key", "auth-lock-key")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString()
+        );
+
+        assertThat(retryResponse.get("expiresAt").asString())
+                .isEqualTo(firstResponse.get("expiresAt").asString());
+        assertThat(retryResponse.get("lockedSeatIds")).hasSize(1);
+        assertThat(seatLockRepository.findAll()).hasSize(1);
+        assertThat(checkoutLockIdempotencyKeyRepository.findAll()).hasSize(1);
+    }
+
+    @Test
+    void lockRejectsSameIdempotencyKeyForDifferentRequest() throws Exception {
+        mockMvc.perform(post("/checkout/lock")
+                        .header("Idempotency-Key", "same-lock-key-different-request")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/checkout/lock")
+                        .header("Idempotency-Key", "same-lock-key-different-request")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), List.of(seat2.getId()), "guest@example.com")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Idempotency-Key was already used for a different checkout lock request"));
+
+        assertThat(seatLockRepository.findAll()).hasSize(1);
+        assertThat(checkoutLockIdempotencyKeyRepository.findAll()).hasSize(1);
+    }
+
+    @Test
+    void sameLockIdempotencyKeyCanBeUsedByDifferentGuestOwners() throws Exception {
+        mockMvc.perform(post("/checkout/lock")
+                        .header("Idempotency-Key", "shared-lock-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "first@example.com")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/checkout/lock")
+                        .header("Idempotency-Key", "shared-lock-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), List.of(seat2.getId()), "second@example.com")))
+                .andExpect(status().isOk());
+
+        assertThat(seatLockRepository.findAll()).hasSize(2);
+        assertThat(checkoutLockIdempotencyKeyRepository.findAll()).hasSize(2);
+    }
+
+    @Test
+    void lockRejectsBlankIdempotencyKey() throws Exception {
+        mockMvc.perform(post("/checkout/lock")
+                        .header("Idempotency-Key", "   ")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Idempotency-Key must not be blank"));
+
+        assertThat(seatLockRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void lockRejectsTooLongIdempotencyKey() throws Exception {
+        mockMvc.perform(post("/checkout/lock")
+                        .header("Idempotency-Key", "x".repeat(256))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Idempotency-Key must not exceed 255 characters"));
+
+        assertThat(seatLockRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void expiredLockIdempotencyKeyReturnsGoneOnRetry() throws Exception {
+        String body = lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com");
+
+        mockMvc.perform(post("/checkout/lock")
+                        .header("Idempotency-Key", "expired-lock-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk());
+
+        CheckoutLockIdempotencyKey idempotencyKey = checkoutLockIdempotencyKeyRepository.findAll().getFirst();
+        idempotencyKey.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+        checkoutLockIdempotencyKeyRepository.save(idempotencyKey);
+
+        mockMvc.perform(post("/checkout/lock")
+                        .header("Idempotency-Key", "expired-lock-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.message").value("Checkout lock idempotency key has expired"));
     }
 
     @Test
@@ -988,6 +1233,17 @@ public class CheckoutIntegrationTest {
     private String lockGuestBody(Long showtimeId, List<Long> seatIds, String guestEmail) throws Exception {
         // Only creates the JSON request body string for guest lock
         return objectMapper.writeValueAsString(new LockGuestRequest(showtimeId, seatIds, guestEmail));
+    }
+
+    private String lockFingerprint(String owner, Long... seatIds) throws Exception {
+        String sortedSeatIds = List.of(seatIds).stream()
+                .sorted()
+                .map(String::valueOf)
+                .reduce((left, right) -> left + "," + right)
+                .orElse("");
+        String value = owner + "|showtime:" + showtime.getId() + "|seats:" + sortedSeatIds;
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
     }
 
     private String confirmGuestBody(Long showtimeId, List<Long> seatIds, String guestEmail, String sessionId, String paymentMethodToken) throws Exception {

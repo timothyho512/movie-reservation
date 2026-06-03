@@ -40,9 +40,14 @@ public class CheckoutController {
     @PostMapping("lock")
     public ResponseEntity<CheckoutLockResponse> lockSeats(
             @RequestBody CheckoutLockRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             Authentication authentication
     ) {
-        return ResponseEntity.ok(checkoutService.lockSeats(request, extractPrincipal(authentication)));
+        return ResponseEntity.ok(checkoutService.lockSeats(
+                request,
+                extractPrincipal(authentication),
+                idempotencyKey
+        ));
     }
 
     @PostMapping("confirm")

@@ -48,6 +48,10 @@ export default function SeatsPage({
   const [guestEmailError, setGuestEmailError] = useState("");
   const [isLocking, setIsLocking] = useState(false);
   const [isPaying, setIsPaying] = useState(false);
+  const [lockAttempt, setLockAttempt] = useState<{
+    signature: string;
+    idempotencyKey: string;
+  } | null>(null);
   const [checkoutAttempt, setCheckoutAttempt] = useState<{
     signature: string;
     idempotencyKey: string;
@@ -69,6 +73,7 @@ export default function SeatsPage({
   useEffect(() => {
     if (isExpired && isLocked) {
       reset();
+      setLockAttempt(null);
       setCheckoutAttempt(null);
       toast.error("Your seat hold expired. Please select seats again.");
     }
@@ -96,11 +101,31 @@ export default function SeatsPage({
 
     setIsLocking(true);
     try {
+      const seatIds = Array.from(selectedSeatIds).sort((a, b) => a - b);
+      const signature = JSON.stringify({
+        showtimeId,
+        seatIds,
+        mode: isLoggedIn ? "authenticated" : "guest",
+        guestEmail: isLoggedIn ? null : guestEmail.trim().toLowerCase(),
+      });
+
+      const attempt =
+        lockAttempt?.signature === signature
+          ? lockAttempt
+          : {
+              signature,
+              idempotencyKey: createIdempotencyKey(),
+            };
+
+      if (attempt !== lockAttempt) {
+        setLockAttempt(attempt);
+      }
+
       const response = await lockSeats({
         showtimeId,
-        seatIds: Array.from(selectedSeatIds),
+        seatIds,
         ...(!isLoggedIn && { guestEmail }),
-      });
+      }, attempt.idempotencyKey);
       setLock(response.sessionId, response.expiresAt);
       setCheckoutAttempt(null);
       toast.success("Seats held for 15 minutes!");
