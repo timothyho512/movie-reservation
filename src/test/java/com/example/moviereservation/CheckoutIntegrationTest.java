@@ -140,6 +140,7 @@ public class CheckoutIntegrationTest {
     private Seat seat2;
     private Seat seat3;
     private User user;
+    private User adminUser;
 
     @BeforeEach
     void setUp() {
@@ -191,6 +192,10 @@ public class CheckoutIntegrationTest {
         user = new User("Jay", "Doe", "jay@example.com", passwordEncoder.encode("password"), "07123456789");
         user.setRole(UserRole.CUSTOMER);
         user = userRepository.save(user);
+
+        adminUser = new User("Admin", "User", "admin@example.com", passwordEncoder.encode("password"), "07000000000");
+        adminUser.setRole(UserRole.ADMIN);
+        adminUser = userRepository.save(adminUser);
 
         // Mock the StripeCheckoutService to return a predictable result for any checkout session creation
         when(stripeCheckoutService.createHostedCheckoutSession(any(), nullable(String.class)))
@@ -672,7 +677,10 @@ public class CheckoutIntegrationTest {
 
     @Test
     void adminCrudEndpointsReturnDtoShapes() throws Exception {
+        String adminToken = adminToken();
+
         String movieCreateResponse = mockMvc.perform(post("/api/movies")
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -692,6 +700,7 @@ public class CheckoutIntegrationTest {
         Long movieId = objectMapper.readTree(movieCreateResponse).get("id").asLong();
 
         mockMvc.perform(put("/api/movies/{id}", movieId)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -705,6 +714,7 @@ public class CheckoutIntegrationTest {
                 .andExpect(jsonPath("$.showtimes").isArray());
 
         String theatreCreateResponse = mockMvc.perform(post("/api/theatres")
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -730,6 +740,7 @@ public class CheckoutIntegrationTest {
         Long theatreId = objectMapper.readTree(theatreCreateResponse).get("id").asLong();
 
         mockMvc.perform(put("/api/theatres/{id}", theatreId)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -750,6 +761,7 @@ public class CheckoutIntegrationTest {
                 .andExpect(jsonPath("$.screens").isArray());
 
         String screenCreateResponse = mockMvc.perform(post("/api/screens")
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -772,6 +784,7 @@ public class CheckoutIntegrationTest {
         Long screenId = objectMapper.readTree(screenCreateResponse).get("id").asLong();
 
         mockMvc.perform(put("/api/screens/{id}", screenId)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -788,6 +801,7 @@ public class CheckoutIntegrationTest {
                 .andExpect(jsonPath("$.screenType").value("DOLBY_ATMOS"));
 
         String seatCreateResponse = mockMvc.perform(post("/api/seats")
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -812,6 +826,7 @@ public class CheckoutIntegrationTest {
         Long seatId = objectMapper.readTree(seatCreateResponse).get("id").asLong();
 
         mockMvc.perform(put("/api/seats/{id}", seatId)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -829,6 +844,7 @@ public class CheckoutIntegrationTest {
                 .andExpect(jsonPath("$.seatType").value("WHEELCHAIR"));
 
         String showtimeCreateResponse = mockMvc.perform(post("/api/showtimes")
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -860,6 +876,7 @@ public class CheckoutIntegrationTest {
         Long showtimeId = objectMapper.readTree(showtimeCreateResponse).get("id").asLong();
 
         mockMvc.perform(put("/api/showtimes/{id}", showtimeId)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -883,6 +900,7 @@ public class CheckoutIntegrationTest {
                 .andExpect(jsonPath("$.basePrice").value(20.00));
 
         String reservationCreateResponse = mockMvc.perform(post("/api/reservations")
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -908,6 +926,7 @@ public class CheckoutIntegrationTest {
         Long reservationId = objectMapper.readTree(reservationCreateResponse).get("reservationId").asLong();
 
         mockMvc.perform(put("/api/reservations/{id}", reservationId)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -1217,6 +1236,10 @@ public class CheckoutIntegrationTest {
         return objectMapper.readTree(response).get("token").asString();
     }
 
+    private String adminToken() throws Exception {
+        return loginAndGetToken(adminUser.getEmail(), "password");
+    }
+
     private JsonNode lockAsGuest(String guestEmail, Long... seatIds) throws Exception {
         String response = mockMvc.perform(post("/checkout/lock")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -1334,14 +1357,10 @@ public class CheckoutIntegrationTest {
                 .getContentAsString();
 
         Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+        String adminToken = adminToken();
 
         mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                "guestEmail": "guest@example.com"
-                                }
-                                """))
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/showtimes/{id}/available-seats", showtime.getId()))
@@ -1373,16 +1392,12 @@ public class CheckoutIntegrationTest {
                 .getContentAsString();
 
         Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+        String adminToken = adminToken();
 
         int availableSeatsBeforeCancel = showtimeRepository.findById(showtime.getId()).orElseThrow().getAvailableSeats();
 
         mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                "guestEmail": "guestcancel@example.com"
-                                }
-                                """))
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reservationId").value(reservationId))
                 .andExpect(jsonPath("$.status").value("CANCELLED"))
@@ -1435,8 +1450,7 @@ public class CheckoutIntegrationTest {
 
                 mockMvc.perform(post("/api/reservations/" + reservationId + "/cancel")
                                 .header("Authorization", "Bearer " + token))
-                        .andExpect(status().isOk())
-                        .andExpect(jsonPath("$.message").value("Reservation cancelled successfully"));
+                        .andExpect(status().isForbidden());
         }
 
         @Test
@@ -1479,8 +1493,7 @@ public class CheckoutIntegrationTest {
                                         "guestEmail": "guest@example.com"
                                         }
                                         """))
-                        .andExpect(status().isBadRequest())
-                        .andExpect(jsonPath("$.message").value("Guest email must not be provided for authenticated users"));
+                        .andExpect(status().isForbidden());
         }
 
         @Test
@@ -1499,8 +1512,9 @@ public class CheckoutIntegrationTest {
                 Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
 
                 mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId))
-                        .andExpect(status().isBadRequest())
-                        .andExpect(jsonPath("$.message").value("Exactly one of authenticated user or guestEmail must be provided"));
+                        .andExpect(status().isUnauthorized())
+                        .andExpect(jsonPath("$.message")
+                                .value("Authentication is required to access this resource"));
         }
 
         @Test
@@ -1525,7 +1539,7 @@ public class CheckoutIntegrationTest {
                                 "guestEmail": "wrong@example.com"
                                 }
                                 """))
-                .andExpect(status().isConflict());
+                .andExpect(status().isUnauthorized());
         }
 
         @Test
@@ -1569,8 +1583,7 @@ public class CheckoutIntegrationTest {
                                 .header("Authorization", "Bearer " + userToken)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{}"))
-                        .andExpect(status().isConflict())
-                        .andExpect(jsonPath("$.message").value("Reservation does not belong to this user"));
+                        .andExpect(status().isForbidden());
         }
 
 
@@ -1588,23 +1601,14 @@ public class CheckoutIntegrationTest {
                 .getContentAsString();
 
         Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+        String adminToken = adminToken();
 
         mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                "guestEmail": "guestcancel@example.com"
-                                }
-                                """))
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk());
 
         mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                "guestEmail": "guestcancel@example.com"
-                                }
-                                """))
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isConflict());
         }
 
@@ -1622,6 +1626,7 @@ public class CheckoutIntegrationTest {
                 .getContentAsString();
 
         Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+        String adminToken = adminToken();
 
         mockMvc.perform(get("/api/showtimes/{id}/available-seats", showtime.getId()))
                 .andExpect(status().isOk())
@@ -1629,12 +1634,7 @@ public class CheckoutIntegrationTest {
                 .andExpect(jsonPath("$.seats[0].available").value(false));
 
         mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                "guestEmail": "guestcancel@example.com"
-                                }
-                                """))
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/showtimes/{id}/available-seats", showtime.getId()))
@@ -1660,14 +1660,10 @@ public class CheckoutIntegrationTest {
                 .getContentAsString();
 
         Long reservationId = objectMapper.readTree(confirmResponse).get("reservationId").asLong();
+        String adminToken = adminToken();
 
         mockMvc.perform(post("/api/reservations/{id}/cancel", reservationId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                "guestEmail": "guestcancel@example.com"
-                                }
-                                """))
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isConflict());
         }
 

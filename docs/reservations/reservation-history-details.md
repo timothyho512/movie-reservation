@@ -273,7 +273,9 @@ The controller still contains older CRUD-style reservation endpoints:
 - `DELETE /api/reservations/{id}`
 - `POST /api/reservations/{id}/cancel`
 
-These are not the main frontend-facing history/details API.
+These are admin/internal endpoints, not the main frontend-facing
+history/details API. Normal customer booking should not create or cancel
+reservations through these routes.
 
 For the current production-style checkout model, frontend reservation creation should happen through Stripe Checkout finalization, not direct reservation creation.
 

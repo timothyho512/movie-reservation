@@ -671,22 +671,22 @@ Response shape is one `ReservationResponse`.
 
 ### POST `/api/reservations/{id}/cancel`
 
-Cancels an existing reservation.
+Cancels an existing reservation through an admin/internal workflow.
 
-Auth: optional
+Auth: admin or manager JWT required
 
-Guest requests must include `guestEmail`. Authenticated ownership is resolved
-from the JWT principal.
+Customer and unauthenticated guest cancellation is intentionally disabled at
+the HTTP security layer for now. Admin/manager users can cancel any reservation
+without sending guest ownership fields.
 
 Request:
 
-```json
-{
-  "guestEmail": "guest@example.com"
-}
+```http
+POST /api/reservations/42/cancel
+Authorization: Bearer <admin-or-manager-jwt>
 ```
 
-For authenticated cancellation, send an empty body or omit `guestEmail`.
+Send an empty body. `guestEmail` is rejected for authenticated requests.
 
 Success: `200 OK`
 
@@ -701,39 +701,39 @@ Success: `200 OK`
 ## Internal CRUD Routes
 
 These routes exist in the monolith but are admin/internal rather than primary
-frontend booking flows. They should be moved behind explicit admin authorization
-before production use, but their response bodies are DTO-based and should not
-expose raw JPA entity graphs.
+frontend booking flows. They are protected by explicit `ADMIN`/`MANAGER`
+authorization for mutating operations, and their response bodies are DTO-based
+so they do not expose raw JPA entity graphs.
 
 | Method | Path | Current note |
 | --- | --- | --- |
-| `POST` | `/api/movies` | Creates movie, returns `MovieDetailResponse` |
-| `PUT` | `/api/movies/{id}` | Updates movie, returns `MovieDetailResponse` |
-| `DELETE` | `/api/movies/{id}` | Deletes movie |
-| `POST` | `/api/theatres` | Creates theatre, returns `TheatreDetailResponse` |
-| `PUT` | `/api/theatres/{id}` | Updates theatre, returns `TheatreDetailResponse` |
-| `DELETE` | `/api/theatres/{id}` | Deletes theatre |
-| `GET` | `/api/screens` | Returns `ScreenResponse` list |
-| `GET` | `/api/screens/{id}` | Returns `ScreenResponse` |
-| `POST` | `/api/screens` | Creates screen, returns `ScreenResponse` |
-| `PUT` | `/api/screens/{id}` | Updates screen, returns `ScreenResponse` |
-| `DELETE` | `/api/screens/{id}` | Deletes screen |
-| `GET` | `/api/seats` | Returns `SeatResponse` list |
-| `GET` | `/api/seats/{id}` | Returns `SeatResponse` |
-| `POST` | `/api/seats` | Creates seat, returns `SeatResponse` |
-| `PUT` | `/api/seats/{id}` | Updates seat, returns `SeatResponse` |
-| `DELETE` | `/api/seats/{id}` | Deletes seat |
-| `POST` | `/api/showtimes` | Creates showtime, returns `ShowtimeSummaryResponse` |
-| `PUT` | `/api/showtimes/{id}` | Updates showtime, returns `ShowtimeSummaryResponse` |
-| `DELETE` | `/api/showtimes/{id}` | Deletes showtime |
-| `POST` | `/api/reservations` | Legacy direct reservation creation, returns `ReservationResponse` |
-| `PUT` | `/api/reservations/{id}` | Legacy direct reservation update, returns `ReservationResponse` |
-| `DELETE` | `/api/reservations/{id}` | Deletes reservation |
-| `GET` | `/api/users` | Authenticated, returns safe user DTO list |
-| `GET` | `/api/users/{id}` | Authenticated, returns safe user DTO |
-| `POST` | `/api/users` | Authenticated, creates user and returns safe user DTO |
-| `PUT` | `/api/users/{id}` | Authenticated, updates user and returns safe user DTO |
-| `DELETE` | `/api/users/{id}` | Authenticated, deletes user |
+| `POST` | `/api/movies` | Admin/manager only. Creates movie, returns `MovieDetailResponse` |
+| `PUT` | `/api/movies/{id}` | Admin/manager only. Updates movie, returns `MovieDetailResponse` |
+| `DELETE` | `/api/movies/{id}` | Admin/manager only. Deletes movie |
+| `POST` | `/api/theatres` | Admin/manager only. Creates theatre, returns `TheatreDetailResponse` |
+| `PUT` | `/api/theatres/{id}` | Admin/manager only. Updates theatre, returns `TheatreDetailResponse` |
+| `DELETE` | `/api/theatres/{id}` | Admin/manager only. Deletes theatre |
+| `GET` | `/api/screens` | Public. Returns `ScreenResponse` list |
+| `GET` | `/api/screens/{id}` | Public. Returns `ScreenResponse` |
+| `POST` | `/api/screens` | Admin/manager only. Creates screen, returns `ScreenResponse` |
+| `PUT` | `/api/screens/{id}` | Admin/manager only. Updates screen, returns `ScreenResponse` |
+| `DELETE` | `/api/screens/{id}` | Admin/manager only. Deletes screen |
+| `GET` | `/api/seats` | Public. Returns `SeatResponse` list |
+| `GET` | `/api/seats/{id}` | Public. Returns `SeatResponse` |
+| `POST` | `/api/seats` | Admin/manager only. Creates seat, returns `SeatResponse` |
+| `PUT` | `/api/seats/{id}` | Admin/manager only. Updates seat, returns `SeatResponse` |
+| `DELETE` | `/api/seats/{id}` | Admin/manager only. Deletes seat |
+| `POST` | `/api/showtimes` | Admin/manager only. Creates showtime, returns `ShowtimeSummaryResponse` |
+| `PUT` | `/api/showtimes/{id}` | Admin/manager only. Updates showtime, returns `ShowtimeSummaryResponse` |
+| `DELETE` | `/api/showtimes/{id}` | Admin/manager only. Deletes showtime |
+| `POST` | `/api/reservations` | Admin/manager only. Legacy direct reservation creation, returns `ReservationResponse` |
+| `PUT` | `/api/reservations/{id}` | Admin/manager only. Legacy direct reservation update, returns `ReservationResponse` |
+| `DELETE` | `/api/reservations/{id}` | Admin/manager only. Deletes reservation |
+| `GET` | `/api/users` | Admin/manager only. Returns safe user DTO list |
+| `GET` | `/api/users/{id}` | Admin/manager only. Returns safe user DTO |
+| `POST` | `/api/users` | Admin/manager only. Creates user and returns safe user DTO |
+| `PUT` | `/api/users/{id}` | Admin/manager only. Updates user and returns safe user DTO |
+| `DELETE` | `/api/users/{id}` | Admin/manager only. Deletes user |
 
 ## Enums Used In Responses
 

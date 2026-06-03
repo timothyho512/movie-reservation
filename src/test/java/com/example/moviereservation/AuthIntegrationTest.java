@@ -225,7 +225,7 @@ public class AuthIntegrationTest {
     }
 
     @Test
-    void usersEndpointReturnsSafeUserDtos() throws Exception {
+    void usersEndpointReturnsSafeUserDtosForAdminOnly() throws Exception {
         String registerRequest = """
                 {
                   "firstName": "Jay",
@@ -245,18 +245,40 @@ public class AuthIntegrationTest {
                 .getContentAsString();
 
         JsonNode registerJson = objectMapper.readTree(registerResponse);
-        String token = registerJson.get("token").asText();
+        String customerToken = registerJson.get("token").asText();
         Long userId = registerJson.get("user").get("id").asLong();
 
+        User admin = new User();
+        admin.setFirstName("Admin");
+        admin.setLastName("User");
+        admin.setEmail("admin@example.com");
+        admin.setPassword(passwordEncoder.encode("password123"));
+        admin.setPhoneNumber("07000000000");
+        admin.setRole(UserRole.ADMIN);
+        admin.setActive(true);
+        admin.setCreatedAt(LocalDateTime.now());
+        admin.setUpdatedAt(LocalDateTime.now());
+        userRepository.save(admin);
+
+        String adminToken = loginAndGetToken("admin@example.com", "password123");
+
         mockMvc.perform(get("/api/users")
-                        .header("Authorization", "Bearer " + token))
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isForbidden());
+
+        String usersResponse = mockMvc.perform(get("/api/users")
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").value(userId))
-                .andExpect(jsonPath("$[0].email").value("jay@example.com"))
-                .andExpect(jsonPath("$[0].password").doesNotExist());
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(usersResponse).contains("\"id\":" + userId);
+        assertThat(usersResponse).contains("\"email\":\"jay@example.com\"");
+        assertThat(usersResponse).doesNotContain("password");
 
         mockMvc.perform(get("/api/users/{id}", userId)
-                        .header("Authorization", "Bearer " + token))
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(userId))
                 .andExpect(jsonPath("$.email").value("jay@example.com"))
@@ -270,6 +292,25 @@ public class AuthIntegrationTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.message")
                         .value("Authentication is required to access this resource"));
+    }
+
+    private String loginAndGetToken(String email, String password) throws Exception {
+        String requestBody = """
+                {
+                  "email": "%s",
+                  "password": "%s"
+                }
+                """.formatted(email, password);
+
+        String response = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        return objectMapper.readTree(response).get("token").asText();
     }
 
 }

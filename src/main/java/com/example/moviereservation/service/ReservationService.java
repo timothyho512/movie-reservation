@@ -254,7 +254,7 @@ public class ReservationService {
         Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
 
         validateCancellationIdentity(effectiveUserId, request);
-        validateReservationOwnership(reservation, effectiveUserId, request);
+        validateReservationOwnership(reservation, effectiveUserId, request, principal);
         validateReservationCancelable(reservation);
 
         reservation.setStatus(ReservationStatus.CANCELLED);
@@ -296,7 +296,16 @@ public class ReservationService {
         }
     }
 
-    private void validateReservationOwnership(Reservation reservation, Long effectiveUserId, CancelReservationRequest request) {
+    private void validateReservationOwnership(
+            Reservation reservation,
+            Long effectiveUserId,
+            CancelReservationRequest request,
+            CustomUserPrincipal principal
+    ) {
+        if (isAdminOrManager(principal)) {
+            return;
+        }
+
         if (effectiveUserId != null) {
             if (reservation.getUser() == null || !reservation.getUser().getId().equals(effectiveUserId)) {
                 throw new SeatUnavailableException("Reservation does not belong to this user");
@@ -307,6 +316,11 @@ public class ReservationService {
         if (reservation.getGuestEmail() == null || !reservation.getGuestEmail().equals(request.getGuestEmail())) {
             throw new SeatUnavailableException("Reservation does not belong to this guest");
         }
+    }
+
+    private boolean isAdminOrManager(CustomUserPrincipal principal) {
+        return principal != null
+                && (principal.getRole() == UserRole.ADMIN || principal.getRole() == UserRole.MANAGER);
     }
 
     private void validateReservationCancelable(Reservation reservation) {

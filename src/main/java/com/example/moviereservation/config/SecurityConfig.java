@@ -29,6 +29,8 @@ public class SecurityConfig {
     @Autowired
     private RestAuthenticationEntryPoint restAuthenticationEntryPoint;
 
+    private static final String[] ADMIN_ROLES = {"ADMIN", "MANAGER"};
+
     @Value("${app.cors.allowed-origins:http://localhost:3000,http://localhost:5173}")
     private String allowedOrigins;
 
@@ -47,14 +49,36 @@ public class SecurityConfig {
                         .requestMatchers("/", "/health").permitAll()
                         .requestMatchers("/api/auth/register", "/api/auth/login").permitAll()
                         .requestMatchers("/api/auth/me").authenticated()
-                        .requestMatchers("/api/users/**").authenticated()
+                        .requestMatchers("/api/users/**").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.GET, "/api/movies/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/movies").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.PUT, "/api/movies/**").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.DELETE, "/api/movies/**").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.GET, "/api/theatres/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/theatres").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.PUT, "/api/theatres/**").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.DELETE, "/api/theatres/**").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.GET, "/api/screens/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/screens").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.PUT, "/api/screens/**").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.DELETE, "/api/screens/**").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.GET, "/api/seats/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/seats").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.PUT, "/api/seats/**").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.DELETE, "/api/seats/**").hasAnyRole(ADMIN_ROLES)
                         .requestMatchers(HttpMethod.GET, "/api/showtimes/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/showtimes").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.PUT, "/api/showtimes/**").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.DELETE, "/api/showtimes/**").hasAnyRole(ADMIN_ROLES)
                         .requestMatchers("/checkout/**").permitAll()
-                        .requestMatchers("/api/reservations/*/cancel").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/reservations/*/cancel").hasAnyRole(ADMIN_ROLES)
                         .requestMatchers(HttpMethod.GET, "/api/reservations/reference/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/reservations").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/reservations/*").authenticated()
-                        .anyRequest().permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/reservations").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.PUT, "/api/reservations/**").hasAnyRole(ADMIN_ROLES)
+                        .requestMatchers(HttpMethod.DELETE, "/api/reservations/**").hasAnyRole(ADMIN_ROLES)
+                        .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(restAuthenticationEntryPoint));
@@ -70,7 +94,7 @@ public class SecurityConfig {
                 .filter(origin -> !origin.isBlank())
                 .toList());
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "Stripe-Signature"));
+        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "Stripe-Signature", "Idempotency-Key"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
 
