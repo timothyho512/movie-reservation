@@ -134,11 +134,9 @@ Observed local result:
 Selected 6 upcoming showtimes for seat-map browsing load
 Expected: 1000 successful seat-map responses and 0 unexpected statuses
 Actual: 1000 successes, 0 unexpected statuses
-Latency: avg=44.44ms, p95=126.01ms, p99=n/a
+Latency: avg=122.24ms, p95=283.97ms, p99=380.88ms
 Result: PASS
 ```
-
-The observed `p99=n/a` was a reporting configuration issue in the custom summary, not a failed threshold. The script now includes `p(99)` in `summaryTrendStats` so future runs print p99 directly.
 
 Useful overrides:
 
