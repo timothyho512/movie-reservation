@@ -144,6 +144,65 @@ Useful overrides:
 BASE_URL=http://localhost:8080 VUS=1000 ITERATIONS=1000 P95_THRESHOLD_MS=500 P99_THRESHOLD_MS=1000 k6 run load-tests/k6/seat-map-browsing.js
 ```
 
+## Checkout Session Retry Storm
+
+Run:
+
+```sh
+k6 run load-tests/k6/checkout-session-retry-storm.js
+```
+
+This scenario validates checkout session idempotency after a client retry storm.
+
+Default behavior:
+
+- discovers one available seeded seat
+- locks that seat as a guest
+- creates one initial checkout session with a stable `Idempotency-Key`
+- sends `100` retry requests to `POST /checkout/session` with the same request body and same `Idempotency-Key`
+- expects every retry to return the original `checkoutReference` and original `stripeCheckoutSessionId`
+
+The script calls:
+
+```text
+GET /api/showtimes
+GET /api/showtimes/{id}/seat-map
+POST /checkout/lock
+POST /checkout/session
+```
+
+Prerequisite:
+
+- the backend must be able to create Stripe Checkout Sessions in the current environment
+- `STRIPE_SECRET_KEY` must be valid if the real Stripe service is enabled
+
+Expected summary:
+
+```text
+Checkout session retry storm test
+=================================
+Expected: 100 idempotent replay responses and 0 unexpected responses
+Actual: 100 replay responses, 0 unexpected responses
+Latency: avg=..., p95=..., p99=...
+Result: PASS
+```
+
+Observed local result:
+
+```text
+Selected showtimeId=1, seatId=2, checkoutReference=chk_5737eac546514353bff8590f66af2809
+Expected: 100 idempotent replay responses and 0 unexpected responses
+Actual: 100 replay responses, 0 unexpected responses
+Latency: avg=82.71ms, p95=128.20ms, p99=130.01ms
+Result: PASS
+```
+
+Useful overrides:
+
+```sh
+BASE_URL=http://localhost:8080 VUS=100 ITERATIONS=100 P95_THRESHOLD_MS=1000 P99_THRESHOLD_MS=2000 k6 run load-tests/k6/checkout-session-retry-storm.js
+```
+
 ## Verification
 
 The k6 thresholds fail the run unless:
@@ -182,4 +241,8 @@ Validated concurrency-safe seat holds with k6, proving only one user can lock th
 
 ```text
 Load-tested the seat-map browsing path with k6, validating 1000 concurrent read requests with zero unexpected responses and documented p95/p99 latency.
+```
+
+```text
+Validated checkout idempotency under retry storms with k6, ensuring repeated session-creation retries return the same checkout reference and Stripe session instead of duplicating payment attempts.
 ```
