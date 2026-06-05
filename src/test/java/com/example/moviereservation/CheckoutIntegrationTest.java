@@ -27,8 +27,10 @@ import com.example.moviereservation.repository.UserRepository;
 import com.example.moviereservation.repository.OutboxEventRepository;
 import com.example.moviereservation.service.OutboxEventService;
 import com.example.moviereservation.service.SeatLockCleanupService;
+import com.example.moviereservation.service.SeatLockCleanupScheduler;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.JsonNode;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -128,6 +130,12 @@ public class CheckoutIntegrationTest {
     private SeatLockCleanupService seatLockCleanupService;
 
     @Autowired
+    private SeatLockCleanupScheduler seatLockCleanupScheduler;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
+
+    @Autowired
     private StringRedisTemplate redisTemplate;
 
 
@@ -223,6 +231,168 @@ public class CheckoutIntegrationTest {
                 .allMatch(lock -> lock.getGuestEmail().equals("guest@example.com"))
                 .allMatch(lock -> lock.getSessionId() != null)
                 .allMatch(lock -> lock.getStatus() == LockStatus.LOCKED);
+    }
+
+    @Test
+    void responseIncludesGeneratedRequestIdHeader() throws Exception {
+        mockMvc.perform(get("/"))
+                .andExpect(status().isOk())
+                .andExpect(header().exists("X-Request-ID"));
+    }
+
+    @Test
+    void actuatorHealthIsPubliclyAccessible() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").exists());
+    }
+
+    @Test
+    void prometheusEndpointIsPubliclyAccessibleAndExportsCustomMetrics() throws Exception {
+        lockAsGuest("guest@example.com", seat1.getId());
+
+        mockMvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("checkout_lock_attempts_total")));
+    }
+
+    @Test
+    void responsePreservesIncomingRequestIdHeader() throws Exception {
+        mockMvc.perform(get("/")
+                        .header("X-Request-ID", "test-request-id-123"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Request-ID", "test-request-id-123"));
+    }
+
+    @Test
+    void apiErrorIncludesRequestId() throws Exception {
+        mockMvc.perform(post("/checkout/lock")
+                        .header("X-Request-ID", "error-request-id-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "showtimeId": %d,
+                                "seatIds": [%d]
+                                }
+                                """.formatted(showtime.getId(), seat1.getId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string("X-Request-ID", "error-request-id-123"))
+                .andExpect(jsonPath("$.requestId").value("error-request-id-123"));
+    }
+
+    @Test
+    void lockConflictIncrementsMetric() throws Exception {
+        lockAsGuest("first@example.com", seat1.getId());
+
+        double before = counterValue("checkout.lock.conflicts");
+
+        mockMvc.perform(post("/checkout/lock")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "second@example.com")))
+                .andExpect(status().isConflict());
+
+        assertThat(counterValue("checkout.lock.conflicts")).isEqualTo(before + 1.0);
+    }
+
+    @Test
+    void checkoutSessionCreationIncrementsMetricAndTimer() throws Exception {
+        String guestEmail = "guest@example.com";
+        String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+        double creationBefore = counterValue("checkout.session.creation");
+        long timerBefore = meterRegistry.get("checkout.session.creation.duration").timer().count();
+
+        mockMvc.perform(post("/checkout/session")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "showtimeId": %d,
+                                "seatIds": [%d],
+                                "guestEmail": "%s",
+                                "sessionId": "%s"
+                                }
+                                """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                .andExpect(status().isOk());
+
+        assertThat(counterValue("checkout.session.creation")).isEqualTo(creationBefore + 1.0);
+        assertThat(meterRegistry.get("checkout.session.creation.duration").timer().count())
+                .isEqualTo(timerBefore + 1);
+    }
+
+    @Test
+    void webhookSuccessAndReservationFinalizationMetricsIncrement() throws Exception {
+        String guestEmail = "guest@example.com";
+        String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+        String createResponse = mockMvc.perform(post("/checkout/session")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                "showtimeId": %d,
+                                "seatIds": [%d],
+                                "guestEmail": "%s",
+                                "sessionId": "%s"
+                                }
+                                """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                .get("stripeCheckoutSessionId")
+                .asString();
+
+        when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                .thenReturn(new StripeCheckoutCompletedEvent(
+                        stripeCheckoutSessionId,
+                        "pi_test_metrics_success"
+                ));
+
+        double webhookReceivedBefore = counterValue("payment.webhook.received");
+        double webhookSuccessBefore = counterValue("payment.webhook.success");
+        double finalizationSuccessBefore = counterValue("reservation.finalization.success");
+
+        mockMvc.perform(post("/checkout/webhook/stripe")
+                        .header("Stripe-Signature", "test-signature")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk());
+
+        assertThat(counterValue("payment.webhook.received")).isEqualTo(webhookReceivedBefore + 1.0);
+        assertThat(counterValue("payment.webhook.success")).isEqualTo(webhookSuccessBefore + 1.0);
+        assertThat(counterValue("reservation.finalization.success")).isEqualTo(finalizationSuccessBefore + 1.0);
+    }
+
+    @Test
+    void webhookFailureIncrementsMetric() throws Exception {
+        when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                .thenThrow(new IllegalArgumentException("Invalid Stripe signature"));
+
+        double before = counterValue("payment.webhook.failure");
+
+        mockMvc.perform(post("/checkout/webhook/stripe")
+                        .header("Stripe-Signature", "bad-signature")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+
+        assertThat(counterValue("payment.webhook.failure")).isEqualTo(before + 1.0);
+    }
+
+    @Test
+    void cleanupSchedulerIncrementsExpiredLockMetric() throws Exception {
+        lockAsGuest("guest@example.com", seat1.getId());
+
+        double before = counterValue("expired.locks");
+
+        SeatLock lock = seatLockRepository.findAll().getFirst();
+        lock.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+        seatLockRepository.save(lock);
+
+        seatLockCleanupScheduler.expireOldLocks();
+
+        assertThat(counterValue("expired.locks")).isGreaterThanOrEqualTo(before + 1.0);
     }
 
     @Test
@@ -3313,6 +3483,10 @@ public class CheckoutIntegrationTest {
                 finalizeStripeCheckout(createResponse);
 
                 return reservationRepository.findAll().getFirst();
+        }
+
+        private double counterValue(String meterName) {
+                return meterRegistry.get(meterName).counter().count();
         }
 
         private void finalizeStripeCheckout(String createResponse) throws Exception {

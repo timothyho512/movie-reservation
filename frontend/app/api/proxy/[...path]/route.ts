@@ -20,6 +20,10 @@ async function proxy(request: NextRequest, params: Promise<{ path: string[] }>) 
   if (idempotencyKey) {
     headers["Idempotency-Key"] = idempotencyKey;
   }
+  const requestId = request.headers.get("X-Request-ID");
+  if (requestId) {
+    headers["X-Request-ID"] = requestId;
+  }
 
   // Forward search params
   const url = new URL(request.url);
@@ -38,14 +42,29 @@ async function proxy(request: NextRequest, params: Promise<{ path: string[] }>) 
   const res = await fetch(backendUrl, init);
 
   if (res.status === 204) {
-    return new Response(null, { status: 204 });
+    return new Response(null, {
+      status: 204,
+      headers: responseHeaders(res),
+    });
   }
 
   const data = await res.text();
   return new Response(data, {
     status: res.status,
-    headers: { "Content-Type": "application/json" },
+    headers: responseHeaders(res),
   });
+}
+
+function responseHeaders(res: Response) {
+  const headers = new Headers();
+  headers.set("Content-Type", res.headers.get("Content-Type") ?? "application/json");
+
+  const requestId = res.headers.get("X-Request-ID");
+  if (requestId) {
+    headers.set("X-Request-ID", requestId);
+  }
+
+  return headers;
 }
 
 export const GET = (req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) =>

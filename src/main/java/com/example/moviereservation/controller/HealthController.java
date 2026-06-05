@@ -9,9 +9,4 @@ public class HealthController {
     public String home() {
         return "Movie Reservation API is running!";
     }
-
-    @GetMapping("/health")
-    public String health() {
-        return "OK";
-    }
 }

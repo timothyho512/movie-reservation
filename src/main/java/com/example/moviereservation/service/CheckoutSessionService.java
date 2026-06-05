@@ -24,8 +24,11 @@ import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.repository.UserRepository;
 import com.example.moviereservation.service.OutboxEventService;
 import com.example.moviereservation.security.CustomUserPrincipal;
+import com.example.moviereservation.observability.CheckoutMetrics;
 import com.example.moviereservation.service.RedisSeatLockService.RedisSeatLockOwner;
 import com.example.moviereservation.service.RedisSeatLockService.RedisSeatLockValue;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
@@ -43,6 +46,7 @@ import java.util.HexFormat;
 
 @Service
 public class CheckoutSessionService {
+    private static final Logger logger = LoggerFactory.getLogger(CheckoutSessionService.class);
 
     private final ShowtimeRepository showtimeRepository;
     private final SeatRepository seatRepository;
@@ -55,6 +59,7 @@ public class CheckoutSessionService {
     private final RedisSeatLockService redisSeatLockService;
     private final RedisSeatMapCacheService redisSeatMapCacheService;
     private final OutboxEventService outboxEventService;
+    private final CheckoutMetrics checkoutMetrics;
 
     public CheckoutSessionService(
             ShowtimeRepository showtimeRepository,
@@ -67,7 +72,8 @@ public class CheckoutSessionService {
             ReservationService reservationService,
             RedisSeatLockService redisSeatLockService,
             RedisSeatMapCacheService redisSeatMapCacheService,
-            OutboxEventService outboxEventService
+            OutboxEventService outboxEventService,
+            CheckoutMetrics checkoutMetrics
     ) {
         this.showtimeRepository = showtimeRepository;
         this.seatRepository = seatRepository;
@@ -80,6 +86,7 @@ public class CheckoutSessionService {
         this.redisSeatLockService = redisSeatLockService;
         this.redisSeatMapCacheService = redisSeatMapCacheService;
         this.outboxEventService = outboxEventService;
+        this.checkoutMetrics = checkoutMetrics;
     }
 
     @Transactional
@@ -98,52 +105,82 @@ public class CheckoutSessionService {
             CustomUserPrincipal principal,
             String idempotencyKey
     ) {
-        String normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
-        Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
-
-        validateCheckoutSessionCreateRequest(request, effectiveUserId);
-
-        CheckoutSessionContext context = prepareCheckoutSessionContext(
+        logger.info(
+                "event=checkout_session_creation_started showtimeId={} seatCount={} authenticated={}",
                 request.getShowtimeId(),
-                request.getSeatIds(),
-                effectiveUserId
+                request.getSeatIds() == null ? 0 : request.getSeatIds().size(),
+                principal != null
         );
 
-        RedisSeatLockOwner owner = buildRedisOwner(context.getUser(), request.getSessionId(), request.getGuestEmail());
-        List<RedisSeatLockValue> activeLocks = loadActiveLocks(
-                context.getShowtime().getId(),
-                request.getSeatIds(),
-                owner
-        );
+        try {
+            return checkoutMetrics.recordCheckoutSessionCreation(() -> {
+                String normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
+                Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
 
-        validateAllSeatsLocked(request.getSeatIds(), activeLocks);
+                validateCheckoutSessionCreateRequest(request, effectiveUserId);
 
-        String requestFingerprint = normalizedIdempotencyKey == null
-                ? null
-                : buildIdempotencyRequestFingerprint(request, effectiveUserId);
+                CheckoutSessionContext context = prepareCheckoutSessionContext(
+                        request.getShowtimeId(),
+                        request.getSeatIds(),
+                        effectiveUserId
+                );
 
-        if (normalizedIdempotencyKey != null) {
-            CheckoutSession existingSession = findExistingIdempotentCheckoutSession(
-                    normalizedIdempotencyKey,
-                    effectiveUserId,
-                    request
+                RedisSeatLockOwner owner = buildRedisOwner(context.getUser(), request.getSessionId(), request.getGuestEmail());
+                List<RedisSeatLockValue> activeLocks = loadActiveLocks(
+                        context.getShowtime().getId(),
+                        request.getSeatIds(),
+                        owner
+                );
+
+                validateAllSeatsLocked(request.getSeatIds(), activeLocks);
+
+                String requestFingerprint = normalizedIdempotencyKey == null
+                        ? null
+                        : buildIdempotencyRequestFingerprint(request, effectiveUserId);
+
+                if (normalizedIdempotencyKey != null) {
+                    CheckoutSession existingSession = findExistingIdempotentCheckoutSession(
+                            normalizedIdempotencyKey,
+                            effectiveUserId,
+                            request
+                    );
+
+                    if (existingSession != null) {
+                        validateIdempotencyFingerprint(existingSession, requestFingerprint);
+                        CheckoutSessionCreateResponse response = buildCreateResponse(ensureStripeCheckoutSession(existingSession));
+                        logger.info(
+                                "event=checkout_session_creation_succeeded showtimeId={} replay=true",
+                                request.getShowtimeId()
+                        );
+                        return response;
+                    }
+                }
+
+                CheckoutSession checkoutSession = createPendingCheckoutSession(
+                        request,
+                        context,
+                        activeLocks,
+                        normalizedIdempotencyKey,
+                        requestFingerprint
+                );
+
+                CheckoutSessionCreateResponse response = buildCreateResponse(checkoutSession);
+                logger.info(
+                        "event=checkout_session_creation_succeeded showtimeId={} replay=false",
+                        context.getShowtime().getId()
+                );
+                return response;
+            });
+        } catch (RuntimeException e) {
+            checkoutMetrics.recordCheckoutSessionCreationFailure();
+            logger.warn(
+                    "event=checkout_session_creation_failed showtimeId={} seatCount={} exception={}",
+                    request.getShowtimeId(),
+                    request.getSeatIds() == null ? 0 : request.getSeatIds().size(),
+                    e.getClass().getSimpleName()
             );
-
-            if (existingSession != null) {
-                validateIdempotencyFingerprint(existingSession, requestFingerprint);
-                return buildCreateResponse(ensureStripeCheckoutSession(existingSession));
-            }
+            throw e;
         }
-
-        CheckoutSession checkoutSession = createPendingCheckoutSession(
-                request,
-                context,
-                activeLocks,
-                normalizedIdempotencyKey,
-                requestFingerprint
-        );
-
-        return buildCreateResponse(checkoutSession);
     }
 
     private String normalizeIdempotencyKey(String idempotencyKey) {
@@ -604,19 +641,43 @@ public class CheckoutSessionService {
     // public method for handling stripe webhooks to update checkout session status based on payment events
     @Transactional
     public void handleStripeWebhook(String payload, String signatureHeader) {
-        StripeCheckoutCompletedEvent completedEvent =
-            stripeCheckoutService.parseCheckoutCompletedEvent(payload, signatureHeader);
+        checkoutMetrics.recordPaymentWebhookReceived();
+        logger.info("event=payment_webhook_received provider=stripe");
 
-        if (completedEvent != null) {
-            finalizePaidCheckoutSession(completedEvent);
-            return;
-        }
+        try {
+            StripeCheckoutCompletedEvent completedEvent =
+                stripeCheckoutService.parseCheckoutCompletedEvent(payload, signatureHeader);
 
-        StripeCheckoutExpiredEvent expiredEvent =
-                stripeCheckoutService.parseCheckoutExpiredEvent(payload, signatureHeader);
+            if (completedEvent != null) {
+                finalizePaidCheckoutSession(completedEvent);
+                checkoutMetrics.recordPaymentWebhookSuccess();
+                logger.info(
+                        "event=payment_webhook_processed provider=stripe type=checkout.session.completed"
+                );
+                return;
+            }
 
-        if (expiredEvent != null) {
-            expireCheckoutSession(expiredEvent);
+            StripeCheckoutExpiredEvent expiredEvent =
+                    stripeCheckoutService.parseCheckoutExpiredEvent(payload, signatureHeader);
+
+            if (expiredEvent != null) {
+                expireCheckoutSession(expiredEvent);
+                checkoutMetrics.recordPaymentWebhookSuccess();
+                logger.info(
+                        "event=payment_webhook_processed provider=stripe type=checkout.session.expired"
+                );
+                return;
+            }
+
+            logger.info("event=payment_webhook_ignored provider=stripe reason=unsupported_event_type");
+            checkoutMetrics.recordPaymentWebhookSuccess();
+        } catch (RuntimeException e) {
+            checkoutMetrics.recordPaymentWebhookFailure();
+            logger.warn(
+                    "event=payment_webhook_failed provider=stripe exception={}",
+                    e.getClass().getSimpleName()
+            );
+            throw e;
         }
     }
 
@@ -647,10 +708,17 @@ public class CheckoutSessionService {
                 .orElse(null);
 
         if (checkoutSession == null) {
+            logger.info(
+                    "event=reservation_finalization_ignored reason=checkout_session_not_found provider=stripe"
+            );
             return;
         }
 
         if (checkoutSession.getStatus() == CheckoutSessionStatus.FINALIZED) {
+            logger.info(
+                    "event=reservation_finalization_ignored checkoutSessionId={} reason=already_finalized",
+                    checkoutSession.getId()
+            );
             return;
         }
 
@@ -658,6 +726,10 @@ public class CheckoutSessionService {
             checkoutSession.setStripePaymentIntentId(completedEvent.getStripePaymentIntentId());
             checkoutSession.setStatus(CheckoutSessionStatus.FINALIZED);
             checkoutSessionRepository.save(checkoutSession);
+            logger.info(
+                    "event=reservation_finalization_ignored checkoutSessionId={} reason=reservation_already_exists",
+                    checkoutSession.getId()
+            );
             return;
         }
 
@@ -665,6 +737,12 @@ public class CheckoutSessionService {
                 || checkoutSession.getStatus() == CheckoutSessionStatus.EXPIRED
                 || checkoutSession.getStatus() == CheckoutSessionStatus.FAILED) {
             markCheckoutFinalizationFailed(checkoutSession, completedEvent);
+            checkoutMetrics.recordReservationFinalizationFailure();
+            logger.warn(
+                    "event=reservation_finalization_failed checkoutSessionId={} status={} reason=terminal_checkout_status",
+                    checkoutSession.getId(),
+                    checkoutSession.getStatus()
+            );
             return;
         }
 
@@ -691,8 +769,22 @@ public class CheckoutSessionService {
             checkoutSessionRepository.save(checkoutSession);
             outboxEventService.recordCheckoutPaymentFinalized(checkoutSession);
             redisSeatMapCacheService.evict(checkoutSession.getShowtime().getId());
+            checkoutMetrics.recordReservationFinalizationSuccess();
+            logger.info(
+                    "event=reservation_finalized checkoutSessionId={} reservationId={} showtimeId={} seatCount={}",
+                    checkoutSession.getId(),
+                    reservation.getId(),
+                    checkoutSession.getShowtime().getId(),
+                    seats.size()
+            );
         } catch (SeatUnavailableException | IllegalStateException e) {
             markCheckoutFinalizationFailed(checkoutSession, completedEvent);
+            checkoutMetrics.recordReservationFinalizationFailure();
+            logger.warn(
+                    "event=reservation_finalization_failed checkoutSessionId={} exception={}",
+                    checkoutSession.getId(),
+                    e.getClass().getSimpleName()
+            );
         }
     }
 
@@ -766,15 +858,25 @@ public class CheckoutSessionService {
                 .orElse(null);
 
         if (checkoutSession == null) {
+            logger.info("event=checkout_session_expiry_ignored reason=checkout_session_not_found provider=stripe");
             return;
         }
 
         if (checkoutSession.getStatus() == CheckoutSessionStatus.FINALIZED) {
+            logger.info(
+                    "event=checkout_session_expiry_ignored checkoutSessionId={} reason=already_finalized",
+                    checkoutSession.getId()
+            );
             return;
         }
 
         if (checkoutSession.getStatus() == CheckoutSessionStatus.CANCELLED
                 || checkoutSession.getStatus() == CheckoutSessionStatus.EXPIRED) {
+            logger.info(
+                    "event=checkout_session_expiry_ignored checkoutSessionId={} reason=terminal_status status={}",
+                    checkoutSession.getId(),
+                    checkoutSession.getStatus()
+            );
             return;
         }
 
@@ -786,6 +888,11 @@ public class CheckoutSessionService {
 
         checkoutSessionRepository.save(checkoutSession);
         outboxEventService.recordCheckoutSessionExpired(checkoutSession);
+        logger.info(
+                "event=checkout_session_expired checkoutSessionId={} showtimeId={}",
+                checkoutSession.getId(),
+                checkoutSession.getShowtime().getId()
+        );
     }
 
     private void expireActiveLocksForCheckoutSession(CheckoutSession checkoutSession) {

@@ -4,6 +4,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.example.moviereservation.dto.CheckoutLockRequest;
 import com.example.moviereservation.dto.CheckoutLockResponse;
@@ -31,6 +33,7 @@ import com.example.moviereservation.Exception.ResourceNotFoundException;
 import com.example.moviereservation.Exception.SeatUnavailableException;
 import com.example.moviereservation.dto.CheckoutConfirmRequest;
 import com.example.moviereservation.dto.CheckoutConfirmResponse;
+import com.example.moviereservation.observability.CheckoutMetrics;
 
 import com.example.moviereservation.dto.CancelLockRequest;
 import com.example.moviereservation.dto.CancelLockResponse;
@@ -47,6 +50,7 @@ import java.util.UUID;
 
 @Service
 public class CheckoutService {
+    private static final Logger logger = LoggerFactory.getLogger(CheckoutService.class);
 
     private final ShowtimeRepository showtimeRepository;
 
@@ -68,8 +72,9 @@ public class CheckoutService {
 
     private final RedisSeatMapCacheService redisSeatMapCacheService;
 
+    private final CheckoutMetrics checkoutMetrics;
 
-    public CheckoutService(ShowtimeRepository showtimeRepository, SeatRepository seatRepository, ReservationRepository reservationRepository, SeatLockRepository seatLockRepository, UserRepository userRepository, ReservationService reservationService, StripeCheckoutService stripeCheckoutService, CheckoutSessionRepository checkoutSessionRepository, CheckoutLockIdempotencyKeyRepository checkoutLockIdempotencyKeyRepository, RedisSeatLockService redisSeatLockService, RedisSeatMapCacheService redisSeatMapCacheService) {
+    public CheckoutService(ShowtimeRepository showtimeRepository, SeatRepository seatRepository, ReservationRepository reservationRepository, SeatLockRepository seatLockRepository, UserRepository userRepository, ReservationService reservationService, StripeCheckoutService stripeCheckoutService, CheckoutSessionRepository checkoutSessionRepository, CheckoutLockIdempotencyKeyRepository checkoutLockIdempotencyKeyRepository, RedisSeatLockService redisSeatLockService, RedisSeatMapCacheService redisSeatMapCacheService, CheckoutMetrics checkoutMetrics) {
         this.showtimeRepository = showtimeRepository;
         this.seatRepository = seatRepository;
         this.reservationRepository = reservationRepository;
@@ -80,6 +85,7 @@ public class CheckoutService {
         this.checkoutLockIdempotencyKeyRepository = checkoutLockIdempotencyKeyRepository;
         this.redisSeatLockService = redisSeatLockService;
         this.redisSeatMapCacheService = redisSeatMapCacheService;
+        this.checkoutMetrics = checkoutMetrics;
     }
 
     // the whole thing needs to be transactional
@@ -96,64 +102,96 @@ public class CheckoutService {
             CustomUserPrincipal principal,
             String idempotencyKey
     ) {
-        String normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
-        Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
-        // Validate request (showtimeId, seatIds, guest/auth identity)
-        validateCheckoutLockRequest(request, effectiveUserId);
+        checkoutMetrics.recordCheckoutLockAttempt();
+        logger.info(
+                "event=checkout_lock_started showtimeId={} seatCount={} authenticated={}",
+                request.getShowtimeId(),
+                request.getSeatIds() == null ? 0 : request.getSeatIds().size(),
+                principal != null
+        );
 
-        CheckoutContext context = prepareCheckoutContext(request.getShowtimeId(), request.getSeatIds(), effectiveUserId);
+        try {
+            String normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
+            Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
+            // Validate request (showtimeId, seatIds, guest/auth identity)
+            validateCheckoutLockRequest(request, effectiveUserId);
 
-        String guestEmail = principal != null ? null : request.getGuestEmail();
+            CheckoutContext context = prepareCheckoutContext(request.getShowtimeId(), request.getSeatIds(), effectiveUserId);
 
-        String requestFingerprint = normalizedIdempotencyKey == null
-                ? null
-                : buildLockRequestFingerprint(request, effectiveUserId, guestEmail);
+            String guestEmail = principal != null ? null : request.getGuestEmail();
 
-        CheckoutLockIdempotencyKey lockIdempotencyKey = null;
+            String requestFingerprint = normalizedIdempotencyKey == null
+                    ? null
+                    : buildLockRequestFingerprint(request, effectiveUserId, guestEmail);
 
-        if (normalizedIdempotencyKey != null) {
-            lockIdempotencyKey = findExistingLockIdempotencyKey(
-                    normalizedIdempotencyKey,
-                    effectiveUserId,
-                    guestEmail
-            );
+            CheckoutLockIdempotencyKey lockIdempotencyKey = null;
 
-            if (lockIdempotencyKey != null) {
-                validateLockIdempotencyFingerprint(lockIdempotencyKey, requestFingerprint);
-                CheckoutLockResponse replayResponse = buildCompletedLockResponseFromIdempotencyKey(lockIdempotencyKey);
-                if (replayResponse != null) {
-                    return replayResponse;
-                }
-            } else {
-                lockIdempotencyKey = createStartedLockIdempotencyKey(
+            if (normalizedIdempotencyKey != null) {
+                lockIdempotencyKey = findExistingLockIdempotencyKey(
                         normalizedIdempotencyKey,
-                        requestFingerprint,
-                        context,
+                        effectiveUserId,
                         guestEmail
                 );
+
+                if (lockIdempotencyKey != null) {
+                    validateLockIdempotencyFingerprint(lockIdempotencyKey, requestFingerprint);
+                    CheckoutLockResponse replayResponse = buildCompletedLockResponseFromIdempotencyKey(lockIdempotencyKey);
+                    if (replayResponse != null) {
+                        checkoutMetrics.recordCheckoutLockSuccess();
+                        logger.info(
+                                "event=checkout_lock_succeeded showtimeId={} lockedSeatCount={} replay=true",
+                                request.getShowtimeId(),
+                                replayResponse.getLockedSeatIds().size()
+                        );
+                        return replayResponse;
+                    }
+                } else {
+                    lockIdempotencyKey = createStartedLockIdempotencyKey(
+                            normalizedIdempotencyKey,
+                            requestFingerprint,
+                            context,
+                            guestEmail
+                    );
+                }
             }
-        }
 
-        // Redis createLocks is the active lock authority and can recover same-owner retries.
-        validateSeatsNotReserved(context.getShowtime(), context.getSeats());
+            // Redis createLocks is the active lock authority and can recover same-owner retries.
+            validateSeatsNotReserved(context.getShowtime(), context.getSeats());
 
-        RedisSeatLockOwner owner = buildRedisOwnerForLock(context.getUser(), guestEmail, lockIdempotencyKey);
-        RedisSeatLockBatch lockBatch;
-        try {
-            lockBatch = createLock(context.getShowtime(), context.getSeats(), owner);
+            RedisSeatLockOwner owner = buildRedisOwnerForLock(context.getUser(), guestEmail, lockIdempotencyKey);
+            RedisSeatLockBatch lockBatch;
+            try {
+                lockBatch = createLock(context.getShowtime(), context.getSeats(), owner);
+            } catch (RuntimeException e) {
+                markLockIdempotencyFailed(lockIdempotencyKey, e);
+                throw e;
+            }
+
+            createAuditLocks(context.getUser(), guestEmail, context.getShowtime(), context.getSeats(), lockBatch);
+            CheckoutLockResponse response = buildLockResponse(lockBatch);
+            completeLockIdempotencyKey(lockIdempotencyKey, response);
+
+            redisSeatMapCacheService.evict(context.getShowtime().getId());
+
+            checkoutMetrics.recordCheckoutLockSuccess();
+            logger.info(
+                    "event=checkout_lock_succeeded showtimeId={} lockedSeatCount={} replay=false",
+                    context.getShowtime().getId(),
+                    response.getLockedSeatIds().size()
+            );
+
+            // Return lock details (sessionId, expiresAt, lockedSeatIds) to the client
+            return response;
         } catch (RuntimeException e) {
-            markLockIdempotencyFailed(lockIdempotencyKey, e);
+            checkoutMetrics.recordCheckoutLockFailure(e);
+            logger.warn(
+                    "event=checkout_lock_failed showtimeId={} seatCount={} exception={}",
+                    request.getShowtimeId(),
+                    request.getSeatIds() == null ? 0 : request.getSeatIds().size(),
+                    e.getClass().getSimpleName()
+            );
             throw e;
         }
-
-        createAuditLocks(context.getUser(), guestEmail, context.getShowtime(), context.getSeats(), lockBatch);
-        CheckoutLockResponse response = buildLockResponse(lockBatch);
-        completeLockIdempotencyKey(lockIdempotencyKey, response);
-
-        redisSeatMapCacheService.evict(context.getShowtime().getId());
-
-        // Return lock details (sessionId, expiresAt, lockedSeatIds) to the client
-        return response;
     }
 
     private String normalizeIdempotencyKey(String idempotencyKey) {
@@ -177,6 +215,12 @@ public class CheckoutService {
     // Legacy fake-payment confirmation flow. Do not use this as the production payment path.
     // Stripe-backed checkout finalizes reservations from CheckoutSessionService webhook handling.
     public CheckoutConfirmResponse confirmCheckout(CheckoutConfirmRequest request, CustomUserPrincipal principal) {
+        logger.info(
+                "event=legacy_checkout_confirm_started showtimeId={} seatCount={} authenticated={}",
+                request.getShowtimeId(),
+                request.getSeatIds() == null ? 0 : request.getSeatIds().size(),
+                principal != null
+        );
         Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
         // Validate request (showtimeId, seatIds, guest/auth identity, sessionId)
         validateCheckoutConfirmRequest(request, effectiveUserId);
@@ -198,15 +242,32 @@ public class CheckoutService {
             releaseLocks(context.getShowtime(), context.getSeats(), owner);
             redisSeatMapCacheService.evict(context.getShowtime().getId());
 
-            return buildConfirmResponse(reservation);
+            CheckoutConfirmResponse response = buildConfirmResponse(reservation);
+            logger.info(
+                    "event=legacy_checkout_confirm_succeeded showtimeId={} reservationId={}",
+                    context.getShowtime().getId(),
+                    reservation.getId()
+            );
+            return response;
         } catch (DataIntegrityViolationException e) {
             // If not available, return an error
+            logger.warn(
+                    "event=legacy_checkout_confirm_failed showtimeId={} exception={}",
+                    request.getShowtimeId(),
+                    e.getClass().getSimpleName()
+            );
             throw new SeatUnavailableException("One or more seats are no longer available");
         }
     }
 
     @Transactional
     public CancelLockResponse cancelLock(CancelLockRequest request, CustomUserPrincipal principal) {
+        logger.info(
+                "event=checkout_lock_cancel_started showtimeId={} seatCount={} authenticated={}",
+                request.getShowtimeId(),
+                request.getSeatIds() == null ? 0 : request.getSeatIds().size(),
+                principal != null
+        );
         Long effectiveUserId = resolveAuthenticatedUserId(principal, request.getGuestEmail());
         // Validate request (showtimeId, seatIds, guest/auth identity, sessionId)
         validateCancelLockRequest(request, effectiveUserId);
@@ -222,6 +283,11 @@ public class CheckoutService {
         cancelPendingCheckoutSessions(context.getShowtime(), context.getUser(), sessionId, guestEmail);
         redisSeatMapCacheService.evict(context.getShowtime().getId());
 
+        logger.info(
+                "event=checkout_lock_cancel_succeeded showtimeId={} seatCount={}",
+                context.getShowtime().getId(),
+                context.getSeats().size()
+        );
         return buildCancelResponse("Locks cancelled successfully");
 
     }

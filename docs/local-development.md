@@ -37,6 +37,25 @@ Redis stores active temporary seat holds and short-lived seat-map cache entries.
 
 The backend also runs a scheduled transactional outbox worker locally. It publishes due outbox events to RabbitMQ, where the first async worker logs booking email work without calling a real email provider.
 
+## Observability
+
+Prometheus and Grafana are available through Docker Compose for local monitoring:
+
+```sh
+docker compose up -d prometheus grafana
+```
+
+Prometheus is available at `http://localhost:9090`. Grafana is available at `http://localhost:3001` with the default local credentials `admin` / `admin`, unless overridden with `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD`.
+
+Prometheus scrapes the backend at `host.docker.internal:8080/actuator/prometheus`, so keep the backend running on the host with the normal `./gradlew bootRun --args='--spring.profiles.active=dev'` command.
+
+The backend exposes Actuator health and metrics at:
+
+```text
+http://localhost:8080/actuator/health
+http://localhost:8080/actuator/prometheus
+```
+
 ## Start the backend
 
 Spring Boot does not automatically load `.env`, so export the file into the shell before running the backend:

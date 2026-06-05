@@ -28,6 +28,31 @@ services:
       - "5672:5672"
       - "15672:15672"
 
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    container_name: movie-reservation-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+
+  grafana:
+    image: grafana/grafana:12.3.0
+    container_name: movie-reservation-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
   test-db:
     image: postgres:16
     container_name: movie-reservation-test-db
@@ -42,3 +67,4 @@ services:
 volumes:
   postgres-data:
   postgres-test-data:
+  grafana-data:
