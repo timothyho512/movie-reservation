@@ -68,8 +68,15 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -2644,6 +2651,83 @@ public class CheckoutIntegrationTest {
                                         .content("{}"))
                                 .andExpect(status().isOk());
                 }
+
+                List<Reservation> reservations = reservationRepository.findAll();
+                assertThat(reservations).hasSize(1);
+                assertThat(reservations.getFirst().getGuestEmail()).isEqualTo(guestEmail);
+                assertThat(reservations.getFirst().getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+                assertThat(reservations.getFirst().getPaymentStatus()).isEqualTo(PaymentStatus.PAID);
+
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.FINALIZED);
+                assertThat(checkoutSession.getReservation()).isNotNull();
+                assertThat(checkoutSession.getReservation().getId()).isEqualTo(reservations.getFirst().getId());
+        }
+
+        @Test
+        void concurrentCompletedWebhooksFinalizeCheckoutOnlyOnce() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(
+                                stripeCheckoutSessionId,
+                                "pi_test_paid"
+                        ));
+
+                int concurrentDeliveries = 10;
+                ExecutorService executor = Executors.newFixedThreadPool(concurrentDeliveries);
+                CountDownLatch ready = new CountDownLatch(concurrentDeliveries);
+                CountDownLatch start = new CountDownLatch(1);
+                List<Callable<Void>> webhookCalls = new ArrayList<>();
+
+                for (int delivery = 0; delivery < concurrentDeliveries; delivery++) {
+                        webhookCalls.add(() -> {
+                                ready.countDown();
+                                assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
+
+                                mockMvc.perform(post("/checkout/webhook/stripe")
+                                                .header("Stripe-Signature", "test-signature")
+                                                .contentType(MediaType.APPLICATION_JSON)
+                                                .content("{}"))
+                                        .andExpect(status().isOk());
+
+                                return null;
+                        });
+                }
+
+                List<Future<Void>> futures = webhookCalls.stream()
+                        .map(executor::submit)
+                        .toList();
+
+                assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+                start.countDown();
+
+                for (Future<Void> future : futures) {
+                        future.get(10, TimeUnit.SECONDS);
+                }
+
+                executor.shutdown();
+                assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
 
                 List<Reservation> reservations = reservationRepository.findAll();
                 assertThat(reservations).hasSize(1);
