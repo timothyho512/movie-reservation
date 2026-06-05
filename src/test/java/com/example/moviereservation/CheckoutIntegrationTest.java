@@ -2608,7 +2608,7 @@ public class CheckoutIntegrationTest {
         }
 
         @Test
-        void stripeWebhookDuplicateDoesNotCreateDuplicateReservation() throws Exception {
+        void stripeWebhookRepeatedDuplicateCompletedDeliveryFinalizesOnlyOnce() throws Exception {
                 String guestEmail = "guest@example.com";
                 String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
 
@@ -2637,23 +2637,24 @@ public class CheckoutIntegrationTest {
                                 "pi_test_paid"
                         ));
 
-                mockMvc.perform(post("/checkout/webhook/stripe")
-                                .header("Stripe-Signature", "test-signature")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content("{}"))
-                        .andExpect(status().isOk());
+                for (int delivery = 0; delivery < 10; delivery++) {
+                        mockMvc.perform(post("/checkout/webhook/stripe")
+                                        .header("Stripe-Signature", "test-signature")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{}"))
+                                .andExpect(status().isOk());
+                }
 
-                mockMvc.perform(post("/checkout/webhook/stripe")
-                                .header("Stripe-Signature", "test-signature")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content("{}"))
-                        .andExpect(status().isOk());
-
-                assertThat(reservationRepository.findAll()).hasSize(1);
+                List<Reservation> reservations = reservationRepository.findAll();
+                assertThat(reservations).hasSize(1);
+                assertThat(reservations.getFirst().getGuestEmail()).isEqualTo(guestEmail);
+                assertThat(reservations.getFirst().getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+                assertThat(reservations.getFirst().getPaymentStatus()).isEqualTo(PaymentStatus.PAID);
 
                 CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
                 assertThat(checkoutSession.getStatus()).isEqualTo(CheckoutSessionStatus.FINALIZED);
                 assertThat(checkoutSession.getReservation()).isNotNull();
+                assertThat(checkoutSession.getReservation().getId()).isEqualTo(reservations.getFirst().getId());
         }
 
         @Test
