@@ -16,6 +16,10 @@ public class Seat {
     @JoinColumn(name = "screen_id", nullable = false)
     private Screen screen;
 
+    @ManyToOne
+    @JoinColumn(name = "layout_version_id")
+    private ScreenLayoutVersion layoutVersion;
+
     @Column(nullable = false)
     private String rowLabel;  // "A", "B", "C", etc.
 
@@ -43,6 +47,7 @@ public class Seat {
 
     public Seat(Screen screen, String rowLabel, Integer seatNumber, SeatType seatType, BigDecimal basePrice) {
         this.screen = screen;
+        this.layoutVersion = screen.getCurrentLayoutVersion();
         this.rowLabel = rowLabel;
         this.seatNumber = seatNumber;
         this.seatType = seatType;
@@ -78,6 +83,14 @@ public class Seat {
 
     public void setScreen(Screen screen) {
         this.screen = screen;
+    }
+
+    public ScreenLayoutVersion getLayoutVersion() {
+        return layoutVersion;
+    }
+
+    public void setLayoutVersion(ScreenLayoutVersion layoutVersion) {
+        this.layoutVersion = layoutVersion;
     }
 
     public String getRowLabel() {

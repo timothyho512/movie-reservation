@@ -28,6 +28,62 @@ Clients should use structured fields such as `status`, `reservationId`, and
 `bookingReference` for control flow. The `message` field is human-readable and
 should not be used for branching logic.
 
+## Admin Reporting
+
+All `/api/admin/**` routes require a JWT with the `ADMIN` or `MANAGER` role.
+
+Reporting routes return Spring Data page responses with `content`,
+`totalElements`, `totalPages`, `number`, and `size`.
+
+Common optional query parameters:
+
+```text
+from=2026-06-01T00:00:00
+to=2026-06-30T23:59:59
+movieId=1
+theatreId=2
+screenId=3
+showtimeId=4
+page=0
+size=20
+sort=revenue,desc
+```
+
+Available reports:
+
+| Route | Metric |
+| --- | --- |
+| `GET /api/admin/reports/showtimes/occupancy` | Paid confirmed/completed seats divided by showtime capacity |
+| `GET /api/admin/reports/movies/revenue` | Paid confirmed/completed reservation revenue grouped by movie |
+| `GET /api/admin/reports/bookings/cancelled` | Cancelled reservations filtered by cancellation time |
+| `GET /api/admin/reports/seats/popular` | Paid booking count grouped by physical seat position |
+| `GET /api/admin/reports/checkout/conversion` | Paid/finalized and abandoned checkout rates grouped by showtime |
+
+Checkout abandonment includes `EXPIRED`, `CANCELLED`, and `FAILED` sessions.
+
+### POST `/api/admin/screens/{screenId}/seat-layout`
+
+Creates a new immutable layout version for future showtimes. Existing showtimes
+continue using the layout version they were created with.
+
+Request:
+
+```json
+{
+  "seats": [
+    {
+      "rowLabel": "A",
+      "seatNumber": 1,
+      "seatType": "REGULAR",
+      "basePrice": 12.50
+    }
+  ]
+}
+```
+
+The response includes `layoutVersionId`, `versionNumber`, `totalSeats`, and the
+created seats.
+
 ## Error Shape
 
 Most application errors return this shape:

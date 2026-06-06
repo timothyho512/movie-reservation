@@ -29,7 +29,7 @@ public class MovieService {
     }
 
     public List<MovieCardResponse> getMovieCards() {
-        return movieRepository.findAll().stream()
+        return movieRepository.findAllByActiveTrueOrderByTitleAsc().stream()
                 .map(this::toMovieCardResponse)
                 .toList();
     }
@@ -57,6 +57,7 @@ public class MovieService {
         Movie movie = new Movie();
         movie.setTitle(request.getTitle());
         movie.setDirector(request.getDirector());
+        movie.setActive(true);
         return movieRepository.save(movie);
     }
 
@@ -74,7 +75,8 @@ public class MovieService {
 
     public void deleteMovie(Long id) {
         Movie movie = getMovieById(id);
-        movieRepository.delete(movie);
+        movie.setActive(false);
+        movieRepository.save(movie);
     }
 
     private MovieCardResponse toMovieCardResponse(Movie movie) {

@@ -22,6 +22,10 @@ public class Showtime {
     @JsonBackReference // probably can delete this
     private Screen screen;  // Which screen it's showing in
 
+    @ManyToOne
+    @JoinColumn(name = "layout_version_id")
+    private ScreenLayoutVersion layoutVersion;
+
     @Column(nullable = false)
     private LocalDateTime startTime;  // When movie starts
 
@@ -51,6 +55,7 @@ public class Showtime {
     public Showtime(Movie movie, Screen screen, LocalDateTime startTime, LocalDateTime endTime, BigDecimal basePrice) {
         this.movie = movie;
         this.screen = screen;
+        this.layoutVersion = screen.getCurrentLayoutVersion();
         this.startTime = startTime;
         this.endTime = endTime;
         this.basePrice = basePrice;
@@ -95,6 +100,14 @@ public class Showtime {
 
     public void setScreen(Screen screen) {
         this.screen = screen;
+    }
+
+    public ScreenLayoutVersion getLayoutVersion() {
+        return layoutVersion;
+    }
+
+    public void setLayoutVersion(ScreenLayoutVersion layoutVersion) {
+        this.layoutVersion = layoutVersion;
     }
 
     public LocalDateTime getStartTime() {

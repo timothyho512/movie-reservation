@@ -186,12 +186,13 @@ public class MovieServiceTest {
     @Test
     void deleteMovie_Success() {
         when(movieRepository.findById(1L)).thenReturn(Optional.of(testMovie));
-        doNothing().when(movieRepository).delete(testMovie);
+        when(movieRepository.save(testMovie)).thenReturn(testMovie);
 
         movieService.deleteMovie(1L);
 
         verify(movieRepository, times(1)).findById(1L);
-        verify(movieRepository, times(1)).delete(testMovie);
+        verify(movieRepository, times(1)).save(testMovie);
+        assertFalse(testMovie.isActive());
     }
 
     @Test

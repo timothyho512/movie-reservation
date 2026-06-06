@@ -1,22 +1,28 @@
 package com.example.moviereservation.entity;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Column;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
+import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
 
 @Entity
-public class Movie {
+@Table(
+        name = "screen_layout_versions",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_screen_layout_versions_screen_version",
+                columnNames = {"screen_id", "version_number"}
+        )
+)
+public class ScreenLayoutVersion {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    private String title;
-    private String director;
+
+    @ManyToOne
+    @JoinColumn(name = "screen_id", nullable = false)
+    private Screen screen;
+
+    @Column(nullable = false)
+    private Integer versionNumber;
 
     @Column(nullable = false)
     private boolean active = true;
@@ -27,15 +33,12 @@ public class Movie {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
-    // Constructor
-    public Movie() {
-        // JPA requires a no-arg constructor
+    public ScreenLayoutVersion() {
     }
 
-    // if later, want to create construct instance faster
-    public Movie(String title, String director) {
-        this.title = title;
-        this.director = director;
+    public ScreenLayoutVersion(Screen screen, Integer versionNumber) {
+        this.screen = screen;
+        this.versionNumber = versionNumber;
         this.active = true;
     }
 
@@ -51,30 +54,24 @@ public class Movie {
         this.updatedAt = LocalDateTime.now();
     }
 
-    // Getters and Setters
-    // usually, the id is fixed and created by postgres
     public Long getId() {
         return id;
     }
 
-    public void setId(Long id) {
-        this.id = id;
+    public Screen getScreen() {
+        return screen;
     }
 
-    public String getTitle() {
-        return title;
+    public void setScreen(Screen screen) {
+        this.screen = screen;
     }
 
-    public void setTitle(String title) {
-        this.title = title;
+    public Integer getVersionNumber() {
+        return versionNumber;
     }
 
-    public String getDirector() {
-        return director;
-    }
-
-    public void setDirector(String director) {
-        this.director = director;
+    public void setVersionNumber(Integer versionNumber) {
+        this.versionNumber = versionNumber;
     }
 
     public boolean isActive() {

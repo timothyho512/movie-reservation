@@ -22,6 +22,7 @@ public class DemoDataSeeder implements CommandLineRunner {
     private final UserRepository userRepository;
     private final TheatreRepository theatreRepository;
     private final ScreenRepository screenRepository;
+    private final ScreenLayoutVersionRepository screenLayoutVersionRepository;
     private final SeatRepository seatRepository;
     private final MovieRepository movieRepository;
     private final ShowtimeRepository showtimeRepository;
@@ -31,6 +32,7 @@ public class DemoDataSeeder implements CommandLineRunner {
             UserRepository userRepository,
             TheatreRepository theatreRepository,
             ScreenRepository screenRepository,
+            ScreenLayoutVersionRepository screenLayoutVersionRepository,
             SeatRepository seatRepository,
             MovieRepository movieRepository,
             ShowtimeRepository showtimeRepository,
@@ -39,6 +41,7 @@ public class DemoDataSeeder implements CommandLineRunner {
         this.userRepository = userRepository;
         this.theatreRepository = theatreRepository;
         this.screenRepository = screenRepository;
+        this.screenLayoutVersionRepository = screenLayoutVersionRepository;
         this.seatRepository = seatRepository;
         this.movieRepository = movieRepository;
         this.showtimeRepository = showtimeRepository;
@@ -102,6 +105,9 @@ public class DemoDataSeeder implements CommandLineRunner {
         Screen vueVip = new Screen("VIP Screen", vue, 30, ScreenType.VIP);
 
         screenRepository.saveAll(List.of(odeonScreenOne, odeonImax, vueVip));
+        initializeLayoutVersion(odeonScreenOne);
+        initializeLayoutVersion(odeonImax);
+        initializeLayoutVersion(vueVip);
 
         seatRepository.saveAll(buildSeats(odeonScreenOne));
         seatRepository.saveAll(buildSeats(odeonImax));
@@ -145,6 +151,12 @@ public class DemoDataSeeder implements CommandLineRunner {
         addAccessibleRow(seats, screen);
 
         return seats;
+    }
+
+    private void initializeLayoutVersion(Screen screen) {
+        ScreenLayoutVersion layoutVersion = screenLayoutVersionRepository.save(new ScreenLayoutVersion(screen, 1));
+        screen.setCurrentLayoutVersion(layoutVersion);
+        screenRepository.save(screen);
     }
 
     private void addRow(List<Seat> seats, Screen screen, String rowLabel, SeatType seatType, String basePrice) {

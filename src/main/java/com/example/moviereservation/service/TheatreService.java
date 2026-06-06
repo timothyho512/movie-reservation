@@ -68,8 +68,8 @@ public class TheatreService {
         theatre.setCountry(request.getCountry());
         theatre.setPostalCode(request.getPostalCode());
         theatre.setPhoneNumber(request.getPhoneNumber());
-        theatre.setTotalScreens(request.getTotalScreens());
-        theatre.setTotalSeats(request.getTotalSeats());
+        theatre.setTotalScreens(request.getTotalScreens() != null ? request.getTotalScreens() : 0);
+        theatre.setTotalSeats(request.getTotalSeats() != null ? request.getTotalSeats() : 0);
         theatre.setActive(true);
 
         return theatreRepository.save(theatre);
@@ -112,7 +112,9 @@ public class TheatreService {
 
     public void deleteTheatre(Long id) {
         Theatre theatre = getTheatreById(id);
-        theatreRepository.delete(theatre);
+        theatre.setActive(false);
+        theatre.setUpdatedAt(LocalDateTime.now());
+        theatreRepository.save(theatre);
     }
 
     private TheatreSummaryResponse toTheatreSummaryResponse(Theatre theatre) {

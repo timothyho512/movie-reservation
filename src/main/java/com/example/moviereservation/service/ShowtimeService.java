@@ -6,12 +6,14 @@ import com.example.moviereservation.entity.Movie;
 import com.example.moviereservation.entity.Screen;
 import com.example.moviereservation.entity.Showtime;
 import com.example.moviereservation.entity.Seat;
+import com.example.moviereservation.entity.ScreenLayoutVersion;
 import com.example.moviereservation.entity.ShowtimeStatus;
 import com.example.moviereservation.repository.MovieRepository;
 import com.example.moviereservation.repository.ScreenRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ReservationRepository;
+import com.example.moviereservation.repository.ScreenLayoutVersionRepository;
 import com.example.moviereservation.dto.GetAvailabilityResponse;
 import com.example.moviereservation.dto.SeatAvailabilityDto;
 import com.example.moviereservation.dto.SeatMapResponse;
@@ -38,6 +40,9 @@ public class ShowtimeService {
 
     @Autowired
     private SeatRepository seatRepository;
+
+    @Autowired
+    private ScreenLayoutVersionRepository screenLayoutVersionRepository;
 
     @Autowired
     private ReservationRepository reservationRepository;
@@ -80,11 +85,14 @@ public class ShowtimeService {
         Showtime showtime = new Showtime();
         showtime.setMovie(movie);
         showtime.setScreen(screen);
+        ScreenLayoutVersion layoutVersion = resolveCurrentLayoutVersion(screen);
+        showtime.setLayoutVersion(layoutVersion);
         showtime.setStartTime(request.getStartTime());
         showtime.setEndTime(request.getEndTime());
         showtime.setBasePrice(request.getBasePrice());
-        showtime.setTotalSeats(screen.getTotalSeats());
-        showtime.setAvailableSeats(screen.getTotalSeats());
+        int totalSeats = seatRepository.findActiveByScreenIdAndLayoutVersionId(screen.getId(), layoutVersion.getId()).size();
+        showtime.setTotalSeats(totalSeats);
+        showtime.setAvailableSeats(totalSeats);
         showtime.setStatus(request.getStatus() != null ? request.getStatus() : ShowtimeStatus.UPCOMING);
 
         Showtime savedShowtime = showtimeRepository.save(showtime);
@@ -107,7 +115,11 @@ public class ShowtimeService {
             Screen screen = screenRepository.findById(request.getScreenId())
                     .orElseThrow(() -> new ResourceNotFoundException("Screen not found with id: " + request.getScreenId()));
             showtime.setScreen(screen);
-            showtime.setTotalSeats(screen.getTotalSeats());
+            ScreenLayoutVersion layoutVersion = resolveCurrentLayoutVersion(screen);
+            showtime.setLayoutVersion(layoutVersion);
+            int totalSeats = seatRepository.findActiveByScreenIdAndLayoutVersionId(screen.getId(), layoutVersion.getId()).size();
+            showtime.setTotalSeats(totalSeats);
+            showtime.setAvailableSeats(totalSeats);
         }
 
         // Update other fields if provided
@@ -131,7 +143,8 @@ public class ShowtimeService {
 
     public void deleteShowtime(Long id) {
         Showtime showtime = getShowtimeById(id);
-        showtimeRepository.delete(showtime);
+        showtime.setStatus(ShowtimeStatus.CANCELLED);
+        showtimeRepository.save(showtime);
         redisSeatMapCacheService.evict(id);
     }
 
@@ -143,7 +156,7 @@ public class ShowtimeService {
         Screen screen = showtime.getScreen();
 
         // then get its seats
-        List<Seat> seats = getSeatsForScreenId(screen.getId());
+        List<Seat> seats = getSeatsForShowtime(showtime);
 
         // then its availability and return the response
         return getSeatsAvailability(showtimeId, seats);
@@ -158,7 +171,7 @@ public class ShowtimeService {
         Showtime showtime = loadShowtimeById(showtimeId);
         Screen screen = showtime.getScreen();
         Movie movie = showtime.getMovie();
-        List<Seat> seats = getSeatsForScreenId(screen.getId());
+        List<Seat> seats = getSeatsForShowtime(showtime);
 
         Set<Long> reservedSeatIds = new HashSet<>(reservationRepository.findReservedSeatIdsForShowtime(showtimeId));
         Set<Long> lockedSeatIds = new HashSet<>(redisSeatLockService.findLockedSeatIdsForShowtime(showtimeId));
@@ -205,8 +218,22 @@ public class ShowtimeService {
                 .orElseThrow(() -> new ResourceNotFoundException("Showtime not found with id: " + showtimeId));
     }
 
-    private List<Seat> getSeatsForScreenId(Long screenId) {
-        return seatRepository.findByScreenId(screenId);
+    private List<Seat> getSeatsForShowtime(Showtime showtime) {
+        Long layoutVersionId = showtime.getLayoutVersion() != null ? showtime.getLayoutVersion().getId() : null;
+        return seatRepository.findActiveByScreenIdAndLayoutVersionId(showtime.getScreen().getId(), layoutVersionId);
+    }
+
+    private ScreenLayoutVersion resolveCurrentLayoutVersion(Screen screen) {
+        if (screen.getCurrentLayoutVersion() != null) {
+            return screen.getCurrentLayoutVersion();
+        }
+
+        ScreenLayoutVersion layoutVersion = screenLayoutVersionRepository
+                .findFirstByScreenIdOrderByVersionNumberDesc(screen.getId())
+                .orElseGet(() -> screenLayoutVersionRepository.save(new ScreenLayoutVersion(screen, 1)));
+        screen.setCurrentLayoutVersion(layoutVersion);
+        screenRepository.save(screen);
+        return layoutVersion;
     }
 
     private GetAvailabilityResponse getSeatsAvailability(Long showtimeId, List<Seat> seats) {

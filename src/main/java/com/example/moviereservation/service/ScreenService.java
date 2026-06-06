@@ -4,8 +4,11 @@ import com.example.moviereservation.Exception.ResourceNotFoundException;
 import com.example.moviereservation.dto.ScreenRequest;
 import com.example.moviereservation.dto.ScreenResponse;
 import com.example.moviereservation.entity.Screen;
+import com.example.moviereservation.entity.ScreenLayoutVersion;
 import com.example.moviereservation.entity.Theatre;
 import com.example.moviereservation.repository.ScreenRepository;
+import com.example.moviereservation.repository.ScreenLayoutVersionRepository;
+import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.TheatreRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -19,6 +22,12 @@ public class ScreenService {
 
     @Autowired
     private TheatreRepository theatreRepository;
+
+    @Autowired
+    private ScreenLayoutVersionRepository screenLayoutVersionRepository;
+
+    @Autowired
+    private SeatRepository seatRepository;
 
     public List<Screen> getAllScreens() {
         return screenRepository.findAll();
@@ -44,16 +53,19 @@ public class ScreenService {
         Theatre theatre = theatreRepository.findById(request.getTheatreId())
                 .orElseThrow(() -> new ResourceNotFoundException("Theatre not found with id: " + request.getTheatreId()));
 
-        // Create screen with the found theatre
         Screen screen = new Screen();
         screen.setName(request.getName());
-        screen.setTheatre(theatre);  // Set the Theatre object
-        screen.setTotalSeats(request.getTotalSeats());
+        screen.setTheatre(theatre);
+        screen.setTotalSeats(request.getTotalSeats() != null ? request.getTotalSeats() : 0);
         screen.setScreenType(request.getScreenType());
         screen.setActive(true);
 
-        // @PrePersist will set createdAt and updatedAt automatically
-        return screenRepository.save(screen);
+        Screen savedScreen = screenRepository.save(screen);
+        ScreenLayoutVersion layoutVersion = screenLayoutVersionRepository.save(new ScreenLayoutVersion(savedScreen, 1));
+        savedScreen.setCurrentLayoutVersion(layoutVersion);
+        savedScreen = screenRepository.save(savedScreen);
+        recalculateTheatreStats(theatre.getId());
+        return savedScreen;
     }
 
     public Screen updateScreen(Long id, ScreenRequest request) {
@@ -70,20 +82,20 @@ public class ScreenService {
         if (request.getName() != null) {
             screen.setName(request.getName());
         }
-        if (request.getTotalSeats() != null) {
-            screen.setTotalSeats(request.getTotalSeats());
-        }
         if (request.getScreenType() != null) {
             screen.setScreenType(request.getScreenType());
         }
 
-        // @PreUpdate will update updatedAt automatically
-        return screenRepository.save(screen);
+        Screen savedScreen = screenRepository.save(screen);
+        recalculateTheatreStats(savedScreen.getTheatre().getId());
+        return savedScreen;
     }
 
     public void deleteScreen(Long id) {
         Screen screen = getScreenById(id);
-        screenRepository.delete(screen);
+        screen.setActive(false);
+        Screen savedScreen = screenRepository.save(screen);
+        recalculateTheatreStats(savedScreen.getTheatre().getId());
     }
 
     public ScreenResponse toScreenResponse(Screen screen) {
@@ -102,5 +114,13 @@ public class ScreenService {
                 screen.getScreenType(),
                 screen.isActive()
         );
+    }
+
+    private void recalculateTheatreStats(Long theatreId) {
+        Theatre theatre = theatreRepository.findById(theatreId)
+                .orElseThrow(() -> new ResourceNotFoundException("Theatre not found with id: " + theatreId));
+        theatre.setTotalScreens((int) screenRepository.countByTheatreIdAndActiveTrue(theatreId));
+        theatre.setTotalSeats((int) seatRepository.countActiveCurrentLayoutSeatsByTheatreId(theatreId));
+        theatreRepository.save(theatre);
     }
 }

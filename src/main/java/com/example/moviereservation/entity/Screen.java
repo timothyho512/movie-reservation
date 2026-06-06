@@ -25,6 +25,10 @@ public class Screen {
     @Enumerated(EnumType.STRING)
     private ScreenType screenType;
 
+    @ManyToOne
+    @JoinColumn(name = "current_layout_version_id")
+    private ScreenLayoutVersion currentLayoutVersion;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
@@ -96,6 +100,14 @@ public class Screen {
 
     public void setScreenType(ScreenType screenType) {
         this.screenType = screenType;
+    }
+
+    public ScreenLayoutVersion getCurrentLayoutVersion() {
+        return currentLayoutVersion;
+    }
+
+    public void setCurrentLayoutVersion(ScreenLayoutVersion currentLayoutVersion) {
+        this.currentLayoutVersion = currentLayoutVersion;
     }
 
     public LocalDateTime getCreatedAt() {

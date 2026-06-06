@@ -19,6 +19,7 @@ import com.example.moviereservation.entity.UserRole;
 import com.example.moviereservation.repository.MovieRepository;
 import com.example.moviereservation.repository.ReservationRepository;
 import com.example.moviereservation.repository.ScreenRepository;
+import com.example.moviereservation.repository.ScreenLayoutVersionRepository;
 import com.example.moviereservation.repository.SeatLockRepository;
 import com.example.moviereservation.repository.SeatRepository;
 import com.example.moviereservation.repository.ShowtimeRepository;
@@ -113,6 +114,9 @@ public class CheckoutIntegrationTest {
     private ScreenRepository screenRepository;
 
     @Autowired
+    private ScreenLayoutVersionRepository screenLayoutVersionRepository;
+
+    @Autowired
     private TheatreRepository theatreRepository;
 
     @Autowired
@@ -167,6 +171,8 @@ public class CheckoutIntegrationTest {
         seatLockRepository.deleteAll();
         seatRepository.deleteAll();
         showtimeRepository.deleteAll();
+        screenRepository.clearCurrentLayoutVersions();
+        screenLayoutVersionRepository.deleteAll();
         screenRepository.deleteAll();
         movieRepository.deleteAll();
         userRepository.deleteAll();
