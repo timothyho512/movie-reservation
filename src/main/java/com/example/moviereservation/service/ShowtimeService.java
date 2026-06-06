@@ -26,6 +26,7 @@ import java.util.HashSet;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
+import java.time.LocalDateTime;
 
 @Service
 public class ShowtimeService {
@@ -53,12 +54,17 @@ public class ShowtimeService {
     @Autowired
     private RedisSeatMapCacheService redisSeatMapCacheService;
 
+    @Autowired
+    private BookingWindowService bookingWindowService;
+
     public List<Showtime> getAllShowtimes() {
         return showtimeRepository.findAll();
     }
 
     public List<ShowtimeSummaryResponse> getShowtimeSummaries() {
-        return showtimeRepository.findAllByOrderByStartTimeAsc().stream()
+        return showtimeRepository.findBookableShowtimes(
+                        bookingWindowService.bookingCutoffFrom(LocalDateTime.now())
+                ).stream()
                 .map(this::toShowtimeSummaryResponse)
                 .toList();
     }
@@ -73,13 +79,18 @@ public class ShowtimeService {
     }
 
     public Showtime createShowtime(ShowtimeRequest request) {
+        validateSchedule(request);
         // Find the movie by ID
         Movie movie = movieRepository.findById(request.getMovieId())
                 .orElseThrow(() -> new ResourceNotFoundException("Movie not found with id: " + request.getMovieId()));
+        if (!movie.isActive()) {
+            throw new IllegalArgumentException("Cannot create a showtime for an inactive movie");
+        }
 
         // Find the screen by ID
         Screen screen = screenRepository.findById(request.getScreenId())
                 .orElseThrow(() -> new ResourceNotFoundException("Screen not found with id: " + request.getScreenId()));
+        validateActiveScreen(screen);
 
         // Create showtime with both relationships
         Showtime showtime = new Showtime();
@@ -107,6 +118,9 @@ public class ShowtimeService {
         if (request.getMovieId() != null) {
             Movie movie = movieRepository.findById(request.getMovieId())
                     .orElseThrow(() -> new ResourceNotFoundException("Movie not found with id: " + request.getMovieId()));
+            if (!movie.isActive()) {
+                throw new IllegalArgumentException("Cannot assign an inactive movie to a showtime");
+            }
             showtime.setMovie(movie);
         }
 
@@ -114,6 +128,7 @@ public class ShowtimeService {
         if (request.getScreenId() != null) {
             Screen screen = screenRepository.findById(request.getScreenId())
                     .orElseThrow(() -> new ResourceNotFoundException("Screen not found with id: " + request.getScreenId()));
+            validateActiveScreen(screen);
             showtime.setScreen(screen);
             ScreenLayoutVersion layoutVersion = resolveCurrentLayoutVersion(screen);
             showtime.setLayoutVersion(layoutVersion);
@@ -135,6 +150,8 @@ public class ShowtimeService {
         if (request.getStatus() != null) {
             showtime.setStatus(request.getStatus());
         }
+
+        validateSchedule(showtime.getStartTime(), showtime.getEndTime());
 
         Showtime savedShowtime = showtimeRepository.save(showtime);
         redisSeatMapCacheService.evict(savedShowtime.getId());
@@ -163,6 +180,12 @@ public class ShowtimeService {
     }
 
     public SeatMapResponse getSeatMap(Long showtimeId) {
+        Showtime showtime = loadShowtimeById(showtimeId);
+        if (!bookingWindowService.isBookable(showtime, LocalDateTime.now())) {
+            throw new com.example.moviereservation.Exception.SeatUnavailableException(
+                    "Seat selection is closed for this showtime"
+            );
+        }
         return redisSeatMapCacheService.get(showtimeId)
                 .orElseGet(() -> buildAndCacheSeatMap(showtimeId));
     }
@@ -236,10 +259,43 @@ public class ShowtimeService {
         return layoutVersion;
     }
 
+    private void validateActiveScreen(Screen screen) {
+        if (!screen.isActive()) {
+            throw new IllegalArgumentException("Cannot create a showtime on an inactive screen");
+        }
+        if (!screen.getTheatre().isActive()) {
+            throw new IllegalArgumentException("Cannot create a showtime in an inactive theatre");
+        }
+    }
+
+    private void validateSchedule(ShowtimeRequest request) {
+        validateSchedule(request.getStartTime(), request.getEndTime());
+    }
+
+    private void validateSchedule(LocalDateTime startTime, LocalDateTime endTime) {
+        if (startTime == null || endTime == null) {
+            throw new IllegalArgumentException("Showtime start and end time are required");
+        }
+        if (!endTime.isAfter(startTime)) {
+            throw new IllegalArgumentException("Showtime end time must be after start time");
+        }
+        if (!startTime.isAfter(bookingWindowService.bookingCutoffFrom(LocalDateTime.now()))) {
+            throw new IllegalArgumentException(
+                    "New showtimes must start more than "
+                            + bookingWindowService.cutoffMinutes()
+                            + " minutes in the future"
+            );
+        }
+    }
+
     private GetAvailabilityResponse getSeatsAvailability(Long showtimeId, List<Seat> seats) {
         Set<Long> reservedSeatIds = new HashSet<>(reservationRepository.findReservedSeatIdsForShowtime(showtimeId));
         Set<Long> lockedSeatIds = new HashSet<>(redisSeatLockService.findLockedSeatIdsForShowtime(showtimeId));
         List<SeatAvailabilityDto> availability = seats.stream()
+            .sorted(Comparator
+                    .comparing(Seat::getRowLabel)
+                    .thenComparing(Seat::getSeatNumber)
+                    .thenComparing(Seat::getId))
             .map(seat -> {
                 boolean available = !reservedSeatIds.contains(seat.getId())
                         && !lockedSeatIds.contains(seat.getId());

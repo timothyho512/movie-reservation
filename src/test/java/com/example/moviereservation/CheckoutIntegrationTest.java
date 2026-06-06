@@ -29,6 +29,7 @@ import com.example.moviereservation.repository.OutboxEventRepository;
 import com.example.moviereservation.service.OutboxEventService;
 import com.example.moviereservation.service.SeatLockCleanupService;
 import com.example.moviereservation.service.SeatLockCleanupScheduler;
+import com.example.moviereservation.service.ShowtimeLifecycleService;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.JsonNode;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -144,6 +145,9 @@ public class CheckoutIntegrationTest {
     private SeatLockCleanupScheduler seatLockCleanupScheduler;
 
     @Autowired
+    private ShowtimeLifecycleService showtimeLifecycleService;
+
+    @Autowired
     private MeterRegistry meterRegistry;
 
     @Autowired
@@ -228,6 +232,8 @@ public class CheckoutIntegrationTest {
                     "pi_test_" + checkoutSession.getCheckoutReference()
             );
         });
+        when(stripeCheckoutService.refundPaymentIntent(any(), any()))
+                .thenReturn("re_test_refund");
     }
 
     @Test
@@ -753,9 +759,9 @@ public class CheckoutIntegrationTest {
 
         mockMvc.perform(post("/checkout/lock")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com")))
+                .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com")))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.message").value("Cannot lock seats for a showtime that has already started"));
+                .andExpect(jsonPath("$.message").value("Booking closes 10 minutes before showtime"));
 
         assertThat(seatLockRepository.findAll()).isEmpty();
     }
@@ -767,11 +773,41 @@ public class CheckoutIntegrationTest {
 
         mockMvc.perform(post("/checkout/lock")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com")))
+                .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com")))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.message").value("Cannot lock seats for a showtime that is not upcoming"));
+                .andExpect(jsonPath("$.message").value("Booking closes 10 minutes before showtime"));
 
         assertThat(seatLockRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void lockRejectsShowtimeInsideBookingCutoff() throws Exception {
+        showtime.setStartTime(LocalDateTime.now().plusMinutes(10));
+        showtime.setEndTime(LocalDateTime.now().plusHours(2));
+        showtimeRepository.save(showtime);
+
+        mockMvc.perform(post("/checkout/lock")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(lockGuestBody(showtime.getId(), List.of(seat1.getId()), "guest@example.com")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Booking closes 10 minutes before showtime"));
+
+        assertThat(seatLockRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void publicShowtimeListExcludesNonBookableShowtimes() throws Exception {
+        showtime.setStartTime(LocalDateTime.now().plusMinutes(5));
+        showtime.setEndTime(LocalDateTime.now().plusHours(2));
+        showtimeRepository.save(showtime);
+
+        mockMvc.perform(get("/api/showtimes"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isEmpty());
+
+        mockMvc.perform(get("/api/movies/{id}", showtime.getMovie().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.showtimes").isEmpty());
     }
 
     @Test
@@ -3267,7 +3303,10 @@ public class CheckoutIntegrationTest {
                 assertThat(locks)
                         .anyMatch(lock -> lock.getSeat().getId().equals(seat1.getId())
                                 && lock.getGuestEmail().equals(guestEmail)
-                                && lock.getStatus() == LockStatus.LOCKED);
+                                && lock.getStatus() == LockStatus.EXPIRED);
+                verify(stripeCheckoutService).expireHostedCheckoutSession(
+                        expiredSession.getStripeCheckoutSessionId()
+                );
         }
 
         @Test
@@ -3367,7 +3406,7 @@ public class CheckoutIntegrationTest {
 
         // test for handling completed webhook for edge cases
         @Test
-        void completedWebhookAfterExpiredCheckoutMarksSessionFailedWithoutReservation() throws Exception {
+        void completedWebhookAfterExpiredCheckoutRefundsPaymentWithoutReservation() throws Exception {
                 String guestEmail = "guest@example.com";
                 String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
 
@@ -3406,16 +3445,21 @@ public class CheckoutIntegrationTest {
                                 .content("{}"))
                         .andExpect(status().isOk());
 
-                CheckoutSession failedSession = checkoutSessionRepository.findAll().getFirst();
-                assertThat(failedSession.getStatus()).isEqualTo(CheckoutSessionStatus.FAILED);
-                assertThat(failedSession.getStripePaymentIntentId()).isEqualTo("pi_test_paid_after_expiry");
-                assertThat(failedSession.getFailedAt()).isNotNull();
+                CheckoutSession refundedSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(refundedSession.getStatus()).isEqualTo(CheckoutSessionStatus.REFUNDED);
+                assertThat(refundedSession.getStripePaymentIntentId()).isEqualTo("pi_test_paid_after_expiry");
+                assertThat(refundedSession.getStripeRefundId()).isEqualTo("re_test_refund");
+                assertThat(refundedSession.getRefundedAt()).isNotNull();
+                verify(stripeCheckoutService).refundPaymentIntent(
+                        "pi_test_paid_after_expiry",
+                        "checkout-refund-" + refundedSession.getCheckoutReference()
+                );
 
                 assertThat(reservationRepository.findAll()).isEmpty();
         }
 
         @Test
-        void completedWebhookAfterCancelledCheckoutMarksSessionFailedWithoutReservation() throws Exception {
+        void completedWebhookAfterCancelledCheckoutRefundsPaymentWithoutReservation() throws Exception {
                 String guestEmail = "guest@example.com";
                 String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
 
@@ -3458,17 +3502,17 @@ public class CheckoutIntegrationTest {
                                 .content("{}"))
                         .andExpect(status().isOk());
 
-                CheckoutSession failedSession = checkoutSessionRepository.findAll().getFirst();
-                assertThat(failedSession.getStatus()).isEqualTo(CheckoutSessionStatus.FAILED);
-                assertThat(failedSession.getStripePaymentIntentId()).isEqualTo("pi_test_paid_after_cancel");
-                assertThat(failedSession.getFailedAt()).isNotNull();
+                CheckoutSession refundedSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(refundedSession.getStatus()).isEqualTo(CheckoutSessionStatus.REFUNDED);
+                assertThat(refundedSession.getStripePaymentIntentId()).isEqualTo("pi_test_paid_after_cancel");
+                assertThat(refundedSession.getStripeRefundId()).isEqualTo("re_test_refund");
 
                 assertThat(reservationRepository.findAll()).isEmpty();
         }
 
 
         @Test
-        void completedWebhookWithExpiredLockMarksSessionFailedWithoutReservation() throws Exception {
+        void completedWebhookWithExpiredLockRefundsPaymentWithoutReservation() throws Exception {
                 String guestEmail = "guest@example.com";
                 String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
 
@@ -3510,15 +3554,171 @@ public class CheckoutIntegrationTest {
                                 .content("{}"))
                         .andExpect(status().isOk());
 
-                CheckoutSession failedSession = checkoutSessionRepository.findAll().getFirst();
-                assertThat(failedSession.getStatus()).isEqualTo(CheckoutSessionStatus.FAILED);
-                assertThat(failedSession.getStripePaymentIntentId()).isEqualTo("pi_test_paid_after_lock_expiry");
-                assertThat(failedSession.getFailedAt()).isNotNull();
+                CheckoutSession refundedSession = checkoutSessionRepository.findAll().getFirst();
+                assertThat(refundedSession.getStatus()).isEqualTo(CheckoutSessionStatus.REFUNDED);
+                assertThat(refundedSession.getStripePaymentIntentId()).isEqualTo("pi_test_paid_after_lock_expiry");
+                assertThat(refundedSession.getStripeRefundId()).isEqualTo("re_test_refund");
 
                 assertThat(reservationRepository.findAll()).isEmpty();
 
                 SeatLock expiredLock = seatLockRepository.findAll().getFirst();
                 assertThat(expiredLock.getStatus()).isEqualTo(LockStatus.EXPIRED);
+        }
+
+        @Test
+        void failedRefundRemainsPendingAndSchedulerRetryCompletesIt() throws Exception {
+                String guestEmail = "guest@example.com";
+                String sessionId = lockAsGuest(guestEmail, seat1.getId()).get("sessionId").asString();
+
+                String createResponse = mockMvc.perform(post("/checkout/session")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                        "showtimeId": %d,
+                                        "seatIds": [%d],
+                                        "guestEmail": "%s",
+                                        "sessionId": "%s"
+                                        }
+                                        """.formatted(showtime.getId(), seat1.getId(), guestEmail, sessionId)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+                String stripeCheckoutSessionId = objectMapper.readTree(createResponse)
+                        .get("stripeCheckoutSessionId")
+                        .asString();
+                CheckoutSession checkoutSession = checkoutSessionRepository.findAll().getFirst();
+                checkoutSession.setStatus(CheckoutSessionStatus.EXPIRED);
+                checkoutSessionRepository.save(checkoutSession);
+
+                when(stripeCheckoutService.refundPaymentIntent(
+                        "pi_retry_refund",
+                        "checkout-refund-" + checkoutSession.getCheckoutReference()
+                ))
+                        .thenThrow(new IllegalStateException("temporary Stripe failure"))
+                        .thenReturn("re_retry_success");
+                when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
+                        .thenReturn(new StripeCheckoutCompletedEvent(stripeCheckoutSessionId, "pi_retry_refund"));
+
+                mockMvc.perform(post("/checkout/webhook/stripe")
+                                .header("Stripe-Signature", "test-signature")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                        .andExpect(status().isOk());
+
+                CheckoutSession pendingRefund = checkoutSessionRepository.findAll().getFirst();
+                assertThat(pendingRefund.getStatus()).isEqualTo(CheckoutSessionStatus.REFUND_PENDING);
+                assertThat(pendingRefund.getRefundError()).contains("temporary Stripe failure");
+
+                assertThat(seatLockCleanupService.retryPendingRefunds()).isEqualTo(1);
+
+                CheckoutSession refunded = checkoutSessionRepository.findAll().getFirst();
+                assertThat(refunded.getStatus()).isEqualTo(CheckoutSessionStatus.REFUNDED);
+                assertThat(refunded.getStripeRefundId()).isEqualTo("re_retry_success");
+                assertThat(refunded.getRefundError()).isNull();
+        }
+
+        @Test
+        void showtimeLifecycleUsesExactBoundariesAndIsIdempotent() {
+                LocalDateTime start = LocalDateTime.of(2030, 1, 10, 18, 0);
+                LocalDateTime end = start.plusHours(2);
+                showtime.setStartTime(start);
+                showtime.setEndTime(end);
+                showtime.setStatus(ShowtimeStatus.UPCOMING);
+                showtimeRepository.save(showtime);
+
+                Reservation reservation = new Reservation();
+                reservation.setUser(user);
+                reservation.setShowtime(showtime);
+                reservation.setSeats(List.of(seat1));
+                reservation.setBookingReference("BK-LIFECYCLE");
+                reservation.setNumberOfSeats(1);
+                reservation.setTotalPrice(new BigDecimal("12.50"));
+                reservation.setCurrency(CurrencyCode.GBP);
+                reservation.setStatus(ReservationStatus.CONFIRMED);
+                reservation.setPaymentStatus(PaymentStatus.PAID);
+                reservation.setBookingTime(start.minusDays(1));
+                reservationRepository.save(reservation);
+
+                ShowtimeLifecycleService.LifecycleResult beforeStart =
+                        showtimeLifecycleService.synchronize(start.minusSeconds(1));
+                assertThat(beforeStart.ongoingShowtimes()).isZero();
+                assertThat(showtimeRepository.findById(showtime.getId()).orElseThrow().getStatus())
+                        .isEqualTo(ShowtimeStatus.UPCOMING);
+
+                ShowtimeLifecycleService.LifecycleResult atStart =
+                        showtimeLifecycleService.synchronize(start);
+                assertThat(atStart.ongoingShowtimes()).isEqualTo(1);
+                assertThat(showtimeRepository.findById(showtime.getId()).orElseThrow().getStatus())
+                        .isEqualTo(ShowtimeStatus.ONGOING);
+
+                ShowtimeLifecycleService.LifecycleResult duringShow =
+                        showtimeLifecycleService.synchronize(start.plusHours(1));
+                assertThat(duringShow.ongoingShowtimes()).isZero();
+                assertThat(duringShow.completedShowtimes()).isZero();
+                assertThat(showtimeRepository.findById(showtime.getId()).orElseThrow().getStatus())
+                        .isEqualTo(ShowtimeStatus.ONGOING);
+
+                ShowtimeLifecycleService.LifecycleResult atEnd =
+                        showtimeLifecycleService.synchronize(end);
+                assertThat(atEnd.completedShowtimes()).isEqualTo(1);
+                assertThat(atEnd.completedReservations()).isEqualTo(1);
+                assertThat(showtimeRepository.findById(showtime.getId()).orElseThrow().getStatus())
+                        .isEqualTo(ShowtimeStatus.COMPLETED);
+                assertThat(reservationRepository.findById(reservation.getId()).orElseThrow().getStatus())
+                        .isEqualTo(ReservationStatus.COMPLETED);
+
+                ShowtimeLifecycleService.LifecycleResult repeated =
+                        showtimeLifecycleService.synchronize(end.plusMinutes(1));
+                assertThat(repeated.ongoingShowtimes()).isZero();
+                assertThat(repeated.completedShowtimes()).isZero();
+                assertThat(repeated.completedReservations()).isZero();
+        }
+
+        @Test
+        void lifecycleLeavesCancelledReservationsCancelled() {
+                LocalDateTime end = LocalDateTime.of(2030, 2, 1, 20, 0);
+                showtime.setStartTime(end.minusHours(2));
+                showtime.setEndTime(end);
+                showtime.setStatus(ShowtimeStatus.ONGOING);
+                showtimeRepository.save(showtime);
+
+                Reservation reservation = new Reservation();
+                reservation.setUser(user);
+                reservation.setShowtime(showtime);
+                reservation.setSeats(List.of(seat1));
+                reservation.setBookingReference("BK-CANCELLED-LIFECYCLE");
+                reservation.setNumberOfSeats(1);
+                reservation.setTotalPrice(new BigDecimal("12.50"));
+                reservation.setCurrency(CurrencyCode.GBP);
+                reservation.setStatus(ReservationStatus.CANCELLED);
+                reservation.setPaymentStatus(PaymentStatus.REFUNDED);
+                reservation.setBookingTime(end.minusDays(1));
+                reservation.setCancelledAt(end.minusHours(3));
+                reservationRepository.save(reservation);
+
+                showtimeLifecycleService.synchronize(end);
+
+                assertThat(reservationRepository.findById(reservation.getId()).orElseThrow().getStatus())
+                        .isEqualTo(ReservationStatus.CANCELLED);
+        }
+
+        @Test
+        void lifecycleLeavesCancelledShowtimesCancelled() {
+                LocalDateTime end = LocalDateTime.of(2030, 3, 1, 20, 0);
+                showtime.setStartTime(end.minusHours(2));
+                showtime.setEndTime(end);
+                showtime.setStatus(ShowtimeStatus.CANCELLED);
+                showtimeRepository.save(showtime);
+
+                ShowtimeLifecycleService.LifecycleResult result =
+                        showtimeLifecycleService.synchronize(end.plusSeconds(1));
+
+                assertThat(result.ongoingShowtimes()).isZero();
+                assertThat(result.completedShowtimes()).isZero();
+                assertThat(showtimeRepository.findById(showtime.getId()).orElseThrow().getStatus())
+                        .isEqualTo(ShowtimeStatus.CANCELLED);
         }
 
         // helper function for reservation finalization in tests

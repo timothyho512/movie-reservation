@@ -83,6 +83,13 @@ public class CheckoutSession {
 
     private LocalDateTime cancelledAt;
 
+    private String stripeRefundId;
+
+    private LocalDateTime refundedAt;
+
+    @Column(length = 2000)
+    private String refundError;
+
     public CheckoutSession() {
     }
 
@@ -186,6 +193,30 @@ public class CheckoutSession {
 
     public void setStatus(CheckoutSessionStatus status) {
         this.status = status;
+    }
+
+    public String getStripeRefundId() {
+        return stripeRefundId;
+    }
+
+    public void setStripeRefundId(String stripeRefundId) {
+        this.stripeRefundId = stripeRefundId;
+    }
+
+    public LocalDateTime getRefundedAt() {
+        return refundedAt;
+    }
+
+    public void setRefundedAt(LocalDateTime refundedAt) {
+        this.refundedAt = refundedAt;
+    }
+
+    public String getRefundError() {
+        return refundError;
+    }
+
+    public void setRefundError(String refundError) {
+        this.refundError = refundError;
     }
 
     public String getStripeCheckoutSessionId() {

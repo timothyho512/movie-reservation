@@ -6,5 +6,7 @@ public enum CheckoutSessionStatus {
     FAILED,
     CANCELLED,
     EXPIRED,
-    FINALIZED
+    FINALIZED,
+    REFUND_PENDING,
+    REFUNDED
 }

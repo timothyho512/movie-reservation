@@ -13,11 +13,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { buttonVariants } from "@/components/ui/button";
-import { Film } from "lucide-react";
+import { Film, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function NavBar() {
-  const { user, isLoggedIn, clearUser } = useAuth();
+  const { user, isLoggedIn, isAdmin, clearUser } = useAuth();
   const router = useRouter();
 
   async function handleLogout() {
@@ -63,6 +63,12 @@ export function NavBar() {
                 <DropdownMenuItem onClick={() => router.push("/account/bookings")}>
                   My Bookings
                 </DropdownMenuItem>
+                {isAdmin ? (
+                  <DropdownMenuItem onClick={() => router.push("/admin")}>
+                    <Settings />
+                    Admin
+                  </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={handleLogout}

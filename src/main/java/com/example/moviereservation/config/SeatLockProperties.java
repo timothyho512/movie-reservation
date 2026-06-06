@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 @Component
 @ConfigurationProperties(prefix = "app.seat-lock")
 public class SeatLockProperties {
-    private long ttlSeconds = 900;
+    private long ttlSeconds = 1860;
 
     public long getTtlSeconds() {
         return ttlSeconds;

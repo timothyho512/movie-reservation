@@ -3,6 +3,7 @@ package com.example.moviereservation.repository;
 import com.example.moviereservation.entity.Reservation;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Modifying;
 
 import org.springframework.data.repository.query.Param;
 import java.util.List;
@@ -40,4 +41,14 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     List<Reservation> findAllByUserIdOrderByBookingTimeDesc(Long userId);
 
     Optional<Reservation> findByBookingReference(String bookingReference);
+
+    @Modifying
+    @Query("""
+            UPDATE Reservation r
+            SET r.status = com.example.moviereservation.entity.ReservationStatus.COMPLETED
+            WHERE r.showtime.id IN :showtimeIds
+              AND r.status = com.example.moviereservation.entity.ReservationStatus.CONFIRMED
+              AND r.paymentStatus = com.example.moviereservation.entity.PaymentStatus.PAID
+            """)
+    int completePaidConfirmedReservations(@Param("showtimeIds") List<Long> showtimeIds);
 }

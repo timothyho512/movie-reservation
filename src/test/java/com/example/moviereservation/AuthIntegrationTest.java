@@ -26,6 +26,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 public class AuthIntegrationTest {
+    private static final String CUSTOMER_EMAIL = "auth.jay@example.com";
+    private static final String ADMIN_EMAIL = "auth.admin@example.com";
 
     @Autowired
     private MockMvc mockMvc;
@@ -41,7 +43,9 @@ public class AuthIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        userRepository.deleteAll();
+        userRepository.findByEmail(CUSTOMER_EMAIL).ifPresent(userRepository::delete);
+        userRepository.findByEmail(ADMIN_EMAIL).ifPresent(userRepository::delete);
+        userRepository.flush();
     }
 
     @Test
@@ -50,9 +54,9 @@ public class AuthIntegrationTest {
                 {
                   "firstName": "Jay",
                   "lastName": "Doe",
-                  "email": "Jay@example.com",
+                  "email": "auth.jay@example.com",
                   "password": "password123",
-                  "phoneNumber": "07123456789"
+                  "phoneNumber": "07911111111"
                 }
                 """;
 
@@ -65,8 +69,8 @@ public class AuthIntegrationTest {
                 .andExpect(jsonPath("$.user.id").isNumber())
                 .andExpect(jsonPath("$.user.firstName").value("Jay"))
                 .andExpect(jsonPath("$.user.lastName").value("Doe"))
-                .andExpect(jsonPath("$.user.email").value("jay@example.com"))
-                .andExpect(jsonPath("$.user.phoneNumber").value("07123456789"))
+                .andExpect(jsonPath("$.user.email").value(CUSTOMER_EMAIL))
+                .andExpect(jsonPath("$.user.phoneNumber").value("07911111111"))
                 .andExpect(jsonPath("$.user.role").value("CUSTOMER"))
                 .andExpect(jsonPath("$.user.active").value(true))
                 .andExpect(jsonPath("$.user.password").doesNotExist())
@@ -79,7 +83,7 @@ public class AuthIntegrationTest {
 
         User savedUser = userRepository.findById(userId).orElseThrow();
 
-        assertThat(savedUser.getEmail()).isEqualTo("jay@example.com");
+        assertThat(savedUser.getEmail()).isEqualTo(CUSTOMER_EMAIL);
         assertThat(savedUser.getPassword()).isNotEqualTo("password123");
         assertThat(passwordEncoder.matches("password123", savedUser.getPassword())).isTrue();
     }
@@ -89,9 +93,9 @@ public class AuthIntegrationTest {
         User user = new User();
         user.setFirstName("Jay");
         user.setLastName("Doe");
-        user.setEmail("jay@example.com");
+        user.setEmail(CUSTOMER_EMAIL);
         user.setPassword(passwordEncoder.encode("password123"));
-        user.setPhoneNumber("07123456789");
+        user.setPhoneNumber("07911111111");
         user.setRole(UserRole.CUSTOMER);
         user.setActive(true);
         user.setCreatedAt(LocalDateTime.now());
@@ -100,7 +104,7 @@ public class AuthIntegrationTest {
 
         String requestBody = """
                 {
-                  "email": "jay@example.com",
+                  "email": "auth.jay@example.com",
                   "password": "password123"
                 }
                 """;
@@ -112,7 +116,7 @@ public class AuthIntegrationTest {
                 .andExpect(jsonPath("$.token").isString())
                 .andExpect(jsonPath("$.token").isNotEmpty())
                 .andExpect(jsonPath("$.user.id").isNumber())
-                .andExpect(jsonPath("$.user.email").value("jay@example.com"))
+                .andExpect(jsonPath("$.user.email").value(CUSTOMER_EMAIL))
                 .andExpect(jsonPath("$.user.role").value("CUSTOMER"))
                 .andExpect(jsonPath("$.user.password").doesNotExist());
     }
@@ -122,9 +126,9 @@ public class AuthIntegrationTest {
         User user = new User();
         user.setFirstName("Jay");
         user.setLastName("Doe");
-        user.setEmail("jay@example.com");
+        user.setEmail(CUSTOMER_EMAIL);
         user.setPassword(passwordEncoder.encode("password123"));
-        user.setPhoneNumber("07123456789");
+        user.setPhoneNumber("07911111111");
         user.setRole(UserRole.CUSTOMER);
         user.setActive(true);
         user.setCreatedAt(LocalDateTime.now());
@@ -133,7 +137,7 @@ public class AuthIntegrationTest {
 
         String requestBody = """
                 {
-                  "email": "jay@example.com",
+                  "email": "auth.jay@example.com",
                   "password": "wrongpassword"
                 }
                 """;
@@ -151,9 +155,9 @@ public class AuthIntegrationTest {
                 {
                   "firstName": "Jay",
                   "lastName": "Doe",
-                  "email": "jay@example.com",
+                  "email": "auth.jay@example.com",
                   "password": "password123",
-                  "phoneNumber": "07123456789"
+                  "phoneNumber": "07911111111"
                 }
                 """;
 
@@ -173,7 +177,7 @@ public class AuthIntegrationTest {
                 .andExpect(jsonPath("$.id").isNumber())
                 .andExpect(jsonPath("$.firstName").value("Jay"))
                 .andExpect(jsonPath("$.lastName").value("Doe"))
-                .andExpect(jsonPath("$.email").value("jay@example.com"))
+                .andExpect(jsonPath("$.email").value(CUSTOMER_EMAIL))
                 .andExpect(jsonPath("$.role").value("CUSTOMER"))
                 .andExpect(jsonPath("$.active").value(true));
     }
@@ -190,9 +194,9 @@ public class AuthIntegrationTest {
         User existingUser = new User();
         existingUser.setFirstName("Existing");
         existingUser.setLastName("User");
-        existingUser.setEmail("jay@example.com");
+        existingUser.setEmail(CUSTOMER_EMAIL);
         existingUser.setPassword(passwordEncoder.encode("password123"));
-        existingUser.setPhoneNumber("07123456789");
+        existingUser.setPhoneNumber("07911111111");
         existingUser.setRole(UserRole.CUSTOMER);
         existingUser.setActive(true);
         existingUser.setCreatedAt(LocalDateTime.now());
@@ -203,7 +207,7 @@ public class AuthIntegrationTest {
                 {
                   "firstName": "Jay",
                   "lastName": "Doe",
-                  "email": "jay@example.com",
+                  "email": "auth.jay@example.com",
                   "password": "password123",
                   "phoneNumber": "07999999999"
                 }
@@ -230,9 +234,9 @@ public class AuthIntegrationTest {
                 {
                   "firstName": "Jay",
                   "lastName": "Doe",
-                  "email": "jay@example.com",
+                  "email": "auth.jay@example.com",
                   "password": "password123",
-                  "phoneNumber": "07123456789"
+                  "phoneNumber": "07911111111"
                 }
                 """;
 
@@ -251,16 +255,16 @@ public class AuthIntegrationTest {
         User admin = new User();
         admin.setFirstName("Admin");
         admin.setLastName("User");
-        admin.setEmail("admin@example.com");
+        admin.setEmail(ADMIN_EMAIL);
         admin.setPassword(passwordEncoder.encode("password123"));
-        admin.setPhoneNumber("07000000000");
+        admin.setPhoneNumber("07922222222");
         admin.setRole(UserRole.ADMIN);
         admin.setActive(true);
         admin.setCreatedAt(LocalDateTime.now());
         admin.setUpdatedAt(LocalDateTime.now());
         userRepository.save(admin);
 
-        String adminToken = loginAndGetToken("admin@example.com", "password123");
+        String adminToken = loginAndGetToken(ADMIN_EMAIL, "password123");
 
         mockMvc.perform(get("/api/users")
                         .header("Authorization", "Bearer " + customerToken))
@@ -274,14 +278,14 @@ public class AuthIntegrationTest {
                 .getContentAsString();
 
         assertThat(usersResponse).contains("\"id\":" + userId);
-        assertThat(usersResponse).contains("\"email\":\"jay@example.com\"");
+        assertThat(usersResponse).contains("\"email\":\"" + CUSTOMER_EMAIL + "\"");
         assertThat(usersResponse).doesNotContain("password");
 
         mockMvc.perform(get("/api/users/{id}", userId)
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(userId))
-                .andExpect(jsonPath("$.email").value("jay@example.com"))
+                .andExpect(jsonPath("$.email").value(CUSTOMER_EMAIL))
                 .andExpect(jsonPath("$.password").doesNotExist());
     }
 

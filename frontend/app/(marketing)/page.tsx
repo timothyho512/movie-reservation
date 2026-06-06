@@ -6,7 +6,7 @@ import { getShowtimes } from "@/lib/api/showtimes";
 import { MovieCard } from "@/components/movies/MovieCard";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { formatDate, formatTime, formatPrice } from "@/lib/format";
+import { bookingCutoffEpoch, formatDate, formatTime, formatPrice } from "@/lib/format";
 import { ChevronRight, Film, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,7 +18,11 @@ export default async function HomePage() {
 
   const featured = movies.slice(0, 5);
   const upcoming = showtimes
-    .filter((s) => s.status === "UPCOMING")
+    .filter(
+      (s) =>
+        s.status === "UPCOMING" &&
+        new Date(s.startTime).getTime() > bookingCutoffEpoch()
+    )
     .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
     .slice(0, 8);
 

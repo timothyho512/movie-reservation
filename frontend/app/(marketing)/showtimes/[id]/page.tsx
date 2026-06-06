@@ -5,7 +5,7 @@ import { getShowtime } from "@/lib/api/showtimes";
 import { ApiError } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { formatDate, formatPrice, formatTime } from "@/lib/format";
+import { bookingCutoffEpoch, formatDate, formatPrice, formatTime } from "@/lib/format";
 import { Clock, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +33,9 @@ export default async function ShowtimeDetailPage({ params }: Props) {
   }
 
   const isCancelled = showtime.status === "CANCELLED";
+  const isBookable =
+    showtime.status === "UPCOMING" &&
+    new Date(showtime.startTime).getTime() > bookingCutoffEpoch();
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-10">
@@ -85,7 +88,7 @@ export default async function ShowtimeDetailPage({ params }: Props) {
             <p className="text-sm text-muted-foreground">
               {showtime.availableSeats} of {showtime.totalSeats} seats available
             </p>
-            {!isCancelled && (
+            {isBookable && (
               <Link
                 href={`/showtimes/${showtime.id}/seats`}
                 className={cn(buttonVariants(), "mt-2 inline-flex")}
@@ -93,6 +96,9 @@ export default async function ShowtimeDetailPage({ params }: Props) {
                 Select Seats
               </Link>
             )}
+            {!isCancelled && !isBookable ? (
+              <p className="mt-2 text-sm text-muted-foreground">Booking is closed.</p>
+            ) : null}
           </div>
         </div>
       </div>

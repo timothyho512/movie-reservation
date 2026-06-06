@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ShowtimeSummaryResponse } from "@/types/api";
-import { formatDate, formatDateKey, formatPrice, formatTime } from "@/lib/format";
+import { bookingCutoffEpoch, formatDate, formatDateKey, formatPrice, formatTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 
 function groupByDate(showtimes: ShowtimeSummaryResponse[]) {
@@ -28,8 +28,9 @@ export function ShowtimePicker({
 }: {
   showtimes: ShowtimeSummaryResponse[];
 }) {
+  const bookingCutoff = bookingCutoffEpoch();
   const upcoming = showtimes.filter(
-    (s) => s.status === "UPCOMING" || s.status === "ONGOING"
+    (s) => s.status === "UPCOMING" && new Date(s.startTime).getTime() > bookingCutoff
   );
 
   if (upcoming.length === 0) {

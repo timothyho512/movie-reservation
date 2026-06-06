@@ -63,6 +63,13 @@ public interface CheckoutSessionRepository extends JpaRepository<CheckoutSession
             LocalDateTime now
     );
 
+    List<CheckoutSession> findAllByStatus(CheckoutSessionStatus status);
+
+    List<CheckoutSession> findAllByShowtimeIdAndStatus(
+            Long showtimeId,
+            CheckoutSessionStatus status
+    );
+
     @Modifying
         @Query("""
                 UPDATE CheckoutSession cs

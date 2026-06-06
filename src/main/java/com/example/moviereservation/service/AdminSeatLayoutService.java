@@ -108,6 +108,24 @@ public class AdminSeatLayoutService {
         );
     }
 
+    @Transactional(readOnly = true)
+    public AdminSeatLayoutResponse getCurrentLayout(Long screenId) {
+        Screen screen = screenRepository.findById(screenId)
+                .orElseThrow(() -> new ResourceNotFoundException("Screen not found with id: " + screenId));
+        ScreenLayoutVersion layoutVersion = screen.getCurrentLayoutVersion();
+        if (layoutVersion == null) {
+            throw new ResourceNotFoundException("Screen has no current seat layout");
+        }
+        List<Seat> seats = seatRepository.findActiveByScreenIdAndLayoutVersionId(screenId, layoutVersion.getId());
+        return new AdminSeatLayoutResponse(
+                screenId,
+                layoutVersion.getId(),
+                layoutVersion.getVersionNumber(),
+                seats.size(),
+                seats.stream().map(seatService::toSeatResponse).toList()
+        );
+    }
+
     private void validateSeatDefinitions(List<AdminSeatLayoutRequest.SeatDefinition> seats) {
         Set<String> seenPositions = new HashSet<>();
         for (AdminSeatLayoutRequest.SeatDefinition seat : seats) {

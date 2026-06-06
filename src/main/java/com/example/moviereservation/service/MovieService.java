@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.time.LocalDateTime;
 
 @Service
 public class MovieService {
@@ -23,6 +24,9 @@ public class MovieService {
 
     @Autowired
     private ShowtimeRepository showtimeRepository;
+
+    @Autowired
+    private BookingWindowService bookingWindowService;
 
     public List<Movie> getAllMovies() {
         return movieRepository.findAll();
@@ -41,7 +45,10 @@ public class MovieService {
 
     public MovieDetailResponse getMovieDetail(Long id) {
         Movie movie = getMovieById(id);
-        List<ShowtimeSummaryResponse> showtimes = showtimeRepository.findAllByMovieIdOrderByStartTimeAsc(id).stream()
+        List<ShowtimeSummaryResponse> showtimes = showtimeRepository.findBookableShowtimesByMovieId(
+                        id,
+                        bookingWindowService.bookingCutoffFrom(LocalDateTime.now())
+                ).stream()
                 .map(this::toShowtimeSummaryResponse)
                 .toList();
 

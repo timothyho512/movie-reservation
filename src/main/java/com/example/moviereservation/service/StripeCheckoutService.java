@@ -6,7 +6,9 @@ import com.example.moviereservation.entity.CheckoutSession;
 import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
 import com.stripe.model.checkout.Session;
+import com.stripe.model.Refund;
 import com.stripe.net.RequestOptions;
+import com.stripe.param.RefundCreateParams;
 import com.stripe.param.checkout.SessionCreateParams;
 import org.springframework.stereotype.Service;
 
@@ -21,6 +23,7 @@ import com.google.gson.JsonParser;
 
 
 import java.math.BigDecimal;
+import java.time.ZoneId;
 import java.util.Map;
 @Service
 public class StripeCheckoutService {
@@ -67,6 +70,9 @@ public class StripeCheckoutService {
                             .setSuccessUrl(buildRedirectUrl(stripeProperties.getSuccessUrl(), checkoutSession))
                             .setCancelUrl(buildRedirectUrl(stripeProperties.getCancelUrl(), checkoutSession))
                             .setCustomerEmail(checkoutSession.getStripeCustomerEmail())
+                            .setExpiresAt(checkoutSession.getExpiresAt()
+                                    .atZone(ZoneId.systemDefault())
+                                    .toEpochSecond())
                             .addLineItem(lineItem)
                             .putAllMetadata(buildMetadata(checkoutSession))
                             .build();
@@ -88,6 +94,44 @@ public class StripeCheckoutService {
             );
         } catch (StripeException e) {
             throw new IllegalStateException("Could not create Stripe checkout session", e);
+        }
+    }
+
+    public void expireHostedCheckoutSession(String stripeCheckoutSessionId) {
+        if (stripeCheckoutSessionId == null || stripeCheckoutSessionId.isBlank()) {
+            return;
+        }
+
+        try {
+            Stripe.apiKey = stripeProperties.getSecretKey();
+            Session.retrieve(stripeCheckoutSessionId).expire();
+        } catch (StripeException e) {
+            throw new IllegalStateException("Could not expire Stripe checkout session", e);
+        }
+    }
+
+    public String refundPaymentIntent(String paymentIntentId, String idempotencyKey) {
+        if (paymentIntentId == null || paymentIntentId.isBlank()) {
+            throw new IllegalArgumentException("Payment intent ID is required for refund");
+        }
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new IllegalArgumentException("Refund idempotency key is required");
+        }
+
+        try {
+            Stripe.apiKey = stripeProperties.getSecretKey();
+            RequestOptions requestOptions = RequestOptions.builder()
+                    .setIdempotencyKey(idempotencyKey)
+                    .build();
+            Refund refund = Refund.create(
+                    RefundCreateParams.builder()
+                            .setPaymentIntent(paymentIntentId)
+                            .build(),
+                    requestOptions
+            );
+            return refund.getId();
+        } catch (StripeException e) {
+            throw new IllegalStateException("Could not refund Stripe payment", e);
         }
     }
 

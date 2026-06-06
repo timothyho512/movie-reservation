@@ -32,7 +32,9 @@ export type CheckoutSessionStatus =
   | "FAILED"
   | "CANCELLED"
   | "EXPIRED"
-  | "FINALIZED";
+  | "FINALIZED"
+  | "REFUND_PENDING"
+  | "REFUNDED";
 
 export type LockStatus =
   | "LOCKED"
@@ -277,4 +279,142 @@ export interface ApiErrorResponse {
   error: string;
   message: string;
   path: string;
+}
+
+// ─── Admin ───────────────────────────────────────────────────────────────────
+
+export interface PageResponse<T> {
+  content: T[];
+  totalElements: number;
+  totalPages: number;
+  number: number;
+  size: number;
+  first: boolean;
+  last: boolean;
+}
+
+export interface AdminMovieResponse extends MovieCardResponse {
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminTheatreResponse extends TheatreSummaryResponse {
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminScreenResponse {
+  id: number;
+  name: string;
+  theatreId: number;
+  theatreName: string;
+  totalSeats: number;
+  screenType: ScreenType;
+  active: boolean;
+  currentLayoutVersionId: number | null;
+  currentLayoutVersion: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminShowtimeResponse {
+  id: number;
+  movieId: number;
+  movieTitle: string;
+  theatreId: number;
+  theatreName: string;
+  screenId: number;
+  screenName: string;
+  screenType: ScreenType;
+  layoutVersionId: number | null;
+  layoutVersion: number | null;
+  startTime: string;
+  endTime: string;
+  basePrice: string;
+  availableSeats: number;
+  totalSeats: number;
+  status: ShowtimeStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminSeatDefinition {
+  rowLabel: string;
+  seatNumber: number;
+  seatType: SeatType;
+  basePrice: number;
+}
+
+export interface AdminSeatLayoutResponse {
+  screenId: number;
+  layoutVersionId: number;
+  versionNumber: number;
+  totalSeats: number;
+  seats: Array<{
+    id: number;
+    rowLabel: string;
+    seatNumber: number;
+    seatType: SeatType;
+    basePrice: string;
+    active: boolean;
+  }>;
+}
+
+export interface ShowtimeOccupancyReportRow {
+  showtimeId: number;
+  movieId: number;
+  movieTitle: string;
+  theatreId: number;
+  theatreName: string;
+  screenId: number;
+  screenName: string;
+  startTime: string;
+  totalSeats: number;
+  reservedSeats: number;
+  occupancyRate: number;
+}
+
+export interface MovieRevenueReportRow {
+  movieId: number;
+  movieTitle: string;
+  reservationCount: number;
+  ticketsSold: number;
+  revenue: number;
+}
+
+export interface CancelledBookingReportRow {
+  reservationId: number;
+  bookingReference: string;
+  movieId: number;
+  movieTitle: string;
+  showtimeId: number;
+  showtimeStartTime: string;
+  cancelledAt: string;
+  numberOfSeats: number;
+  totalPrice: number;
+  paymentStatus: PaymentStatus;
+}
+
+export interface PopularSeatReportRow {
+  screenId: number;
+  screenName: string;
+  theatreId: number;
+  theatreName: string;
+  rowLabel: string;
+  seatNumber: number;
+  seatType: SeatType;
+  bookingCount: number;
+  revenue: number;
+}
+
+export interface CheckoutConversionReportRow {
+  showtimeId: number;
+  movieId: number;
+  movieTitle: string;
+  checkoutCount: number;
+  paidCheckoutCount: number;
+  abandonedCheckoutCount: number;
+  conversionRate: number;
+  abandonedRate: number;
 }

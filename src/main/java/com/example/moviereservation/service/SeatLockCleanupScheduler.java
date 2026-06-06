@@ -28,6 +28,7 @@ public class SeatLockCleanupScheduler {
     public void expireOldLocks() {
         int expiredLockCount = seatLockCleanupService.expireTimedOutLocks();
         int expiredCheckoutSessionCount = seatLockCleanupService.expireStalePendingCheckoutSessions();
+        seatLockCleanupService.retryPendingRefunds();
 
         if (expiredLockCount > 0) {
             checkoutMetrics.recordExpiredLocks(expiredLockCount);

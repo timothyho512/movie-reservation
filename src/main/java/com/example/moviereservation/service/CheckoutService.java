@@ -73,8 +73,9 @@ public class CheckoutService {
     private final RedisSeatMapCacheService redisSeatMapCacheService;
 
     private final CheckoutMetrics checkoutMetrics;
+    private final BookingWindowService bookingWindowService;
 
-    public CheckoutService(ShowtimeRepository showtimeRepository, SeatRepository seatRepository, ReservationRepository reservationRepository, SeatLockRepository seatLockRepository, UserRepository userRepository, ReservationService reservationService, StripeCheckoutService stripeCheckoutService, CheckoutSessionRepository checkoutSessionRepository, CheckoutLockIdempotencyKeyRepository checkoutLockIdempotencyKeyRepository, RedisSeatLockService redisSeatLockService, RedisSeatMapCacheService redisSeatMapCacheService, CheckoutMetrics checkoutMetrics) {
+    public CheckoutService(ShowtimeRepository showtimeRepository, SeatRepository seatRepository, ReservationRepository reservationRepository, SeatLockRepository seatLockRepository, UserRepository userRepository, ReservationService reservationService, StripeCheckoutService stripeCheckoutService, CheckoutSessionRepository checkoutSessionRepository, CheckoutLockIdempotencyKeyRepository checkoutLockIdempotencyKeyRepository, RedisSeatLockService redisSeatLockService, RedisSeatMapCacheService redisSeatMapCacheService, CheckoutMetrics checkoutMetrics, BookingWindowService bookingWindowService) {
         this.showtimeRepository = showtimeRepository;
         this.seatRepository = seatRepository;
         this.reservationRepository = reservationRepository;
@@ -86,6 +87,7 @@ public class CheckoutService {
         this.redisSeatLockService = redisSeatLockService;
         this.redisSeatMapCacheService = redisSeatMapCacheService;
         this.checkoutMetrics = checkoutMetrics;
+        this.bookingWindowService = bookingWindowService;
     }
 
     // the whole thing needs to be transactional
@@ -434,13 +436,10 @@ public class CheckoutService {
     }
 
     private void validateShowtimeBookable(Showtime showtime) {
-        // checks that the showtime is in the future
-        if (showtime.getStartTime().isBefore(LocalDateTime.now())) {
-            throw new SeatUnavailableException("Cannot lock seats for a showtime that has already started");
-        }
-        // check showtime status is Upcoming
-        if (showtime.getStatus() != ShowtimeStatus.UPCOMING) {
-            throw new SeatUnavailableException("Cannot lock seats for a showtime that is not upcoming");
+        if (!bookingWindowService.isBookable(showtime, LocalDateTime.now())) {
+            throw new SeatUnavailableException(
+                    "Booking closes " + bookingWindowService.cutoffMinutes() + " minutes before showtime"
+            );
         }
     }
 

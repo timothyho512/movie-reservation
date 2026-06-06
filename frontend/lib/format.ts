@@ -44,6 +44,10 @@ export function formatDateKey(iso: string): string {
   return new Date(iso).toISOString().slice(0, 10);
 }
 
+export function bookingCutoffEpoch(cutoffMinutes = 10): number {
+  return new Date().getTime() + cutoffMinutes * 60 * 1000;
+}
+
 /**
  * Returns MM:SS string from a future ISO date string, or "00:00" if expired.
  */

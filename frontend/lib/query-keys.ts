@@ -19,4 +19,11 @@ export const queryKeys = {
     all: ["reservations"] as const,
     detail: (id: number) => ["reservations", id] as const,
   },
+  admin: {
+    movies: (params: object) => ["admin", "movies", params] as const,
+    theatres: (params: object) => ["admin", "theatres", params] as const,
+    screens: (params: object) => ["admin", "screens", params] as const,
+    showtimes: (params: object) => ["admin", "showtimes", params] as const,
+    reports: (params: object) => ["admin", "reports", params] as const,
+  },
 };

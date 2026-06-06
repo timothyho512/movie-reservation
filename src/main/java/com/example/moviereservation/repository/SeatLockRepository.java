@@ -82,4 +82,13 @@ public interface SeatLockRepository extends JpaRepository<SeatLock, Long>{
             @Param("sessionId") String sessionId,
             @Param("guestEmail") String guestEmail
     );
+
+    @Modifying
+    @Query("""
+        UPDATE SeatLock sl
+        SET sl.status = com.example.moviereservation.entity.LockStatus.EXPIRED
+        WHERE sl.showtime.id = :showtimeId
+          AND sl.status = com.example.moviereservation.entity.LockStatus.LOCKED
+    """)
+    int expireAllActiveLocksForShowtime(@Param("showtimeId") Long showtimeId);
 }

@@ -22,6 +22,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -120,6 +121,58 @@ class AdminReportingIntegrationTest {
         mockMvc.perform(get("/api/admin/reports/showtimes/occupancy")
                         .header("Authorization", bearer(customer)))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void adminManagementListsInactiveRecordsAndCanReactivateThem() throws Exception {
+        movie.setActive(false);
+        movieRepository.saveAndFlush(movie);
+
+        mockMvc.perform(get("/api/admin/movies")
+                        .param("active", "false")
+                        .param("search", "Report")
+                        .param("page", "0")
+                        .param("size", "5")
+                        .header("Authorization", bearer(admin)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].id").value(movie.getId()))
+                .andExpect(jsonPath("$.content[0].active").value(false))
+                .andExpect(jsonPath("$.size").value(5));
+
+        mockMvc.perform(patch("/api/admin/movies/{id}/status", movie.getId())
+                        .header("Authorization", bearer(admin))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.active").value(true));
+
+        assertThat(movieRepository.findById(movie.getId()).orElseThrow().isActive()).isTrue();
+    }
+
+    @Test
+    void customerCannotAccessAdminManagement() throws Exception {
+        mockMvc.perform(get("/api/admin/movies")
+                        .header("Authorization", bearer(customer)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void inactiveResourcesCannotBeUsedForNewShowtime() {
+        movie.setActive(false);
+        movieRepository.saveAndFlush(movie);
+
+        ShowtimeRequest request = new ShowtimeRequest(
+                movie.getId(),
+                screen.getId(),
+                LocalDateTime.now().plusDays(3),
+                LocalDateTime.now().plusDays(3).plusHours(2),
+                new BigDecimal("10.00")
+        );
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> showtimeService.createShowtime(request)
+        );
     }
 
     @Test

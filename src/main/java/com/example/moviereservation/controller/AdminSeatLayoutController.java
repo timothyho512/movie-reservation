@@ -15,6 +15,11 @@ public class AdminSeatLayoutController {
         this.adminSeatLayoutService = adminSeatLayoutService;
     }
 
+    @GetMapping("/{screenId}/seat-layout")
+    public ResponseEntity<AdminSeatLayoutResponse> getCurrentSeatLayout(@PathVariable Long screenId) {
+        return ResponseEntity.ok(adminSeatLayoutService.getCurrentLayout(screenId));
+    }
+
     @PostMapping("/{screenId}/seat-layout")
     public ResponseEntity<AdminSeatLayoutResponse> replaceSeatLayout(
             @PathVariable Long screenId,

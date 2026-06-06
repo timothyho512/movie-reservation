@@ -60,6 +60,7 @@ public class CheckoutSessionService {
     private final RedisSeatMapCacheService redisSeatMapCacheService;
     private final OutboxEventService outboxEventService;
     private final CheckoutMetrics checkoutMetrics;
+    private final BookingWindowService bookingWindowService;
 
     public CheckoutSessionService(
             ShowtimeRepository showtimeRepository,
@@ -73,7 +74,8 @@ public class CheckoutSessionService {
             RedisSeatLockService redisSeatLockService,
             RedisSeatMapCacheService redisSeatMapCacheService,
             OutboxEventService outboxEventService,
-            CheckoutMetrics checkoutMetrics
+            CheckoutMetrics checkoutMetrics,
+            BookingWindowService bookingWindowService
     ) {
         this.showtimeRepository = showtimeRepository;
         this.seatRepository = seatRepository;
@@ -87,6 +89,7 @@ public class CheckoutSessionService {
         this.redisSeatMapCacheService = redisSeatMapCacheService;
         this.outboxEventService = outboxEventService;
         this.checkoutMetrics = checkoutMetrics;
+        this.bookingWindowService = bookingWindowService;
     }
 
     @Transactional
@@ -296,12 +299,10 @@ public class CheckoutSessionService {
     }
 
     private void validateShowtimeBookable(Showtime showtime) {
-        if (showtime.getStartTime().isBefore(LocalDateTime.now())) {
-            throw new SeatUnavailableException("Cannot create checkout session for a showtime that has already started");
-        }
-
-        if (showtime.getStatus() != ShowtimeStatus.UPCOMING) {
-            throw new SeatUnavailableException("Cannot create checkout session for a showtime that is not upcoming");
+        if (!bookingWindowService.isBookable(showtime, LocalDateTime.now())) {
+            throw new SeatUnavailableException(
+                    "Booking closes " + bookingWindowService.cutoffMinutes() + " minutes before showtime"
+            );
         }
     }
 
@@ -634,6 +635,8 @@ public class CheckoutSessionService {
             case FAILED -> "Checkout session payment failed";
             case CANCELLED -> "Checkout session was cancelled";
             case EXPIRED -> "Checkout session expired";
+            case REFUND_PENDING -> "Payment received but reservation failed; refund is pending";
+            case REFUNDED -> "Payment was refunded because the reservation could not be finalized";
         };
     }
 
@@ -722,6 +725,14 @@ public class CheckoutSessionService {
             return;
         }
 
+        if (checkoutSession.getStatus() == CheckoutSessionStatus.REFUNDED) {
+            logger.info(
+                    "event=reservation_finalization_ignored checkoutSessionId={} reason=already_refunded",
+                    checkoutSession.getId()
+            );
+            return;
+        }
+
         if (checkoutSession.getReservation() != null) {
             checkoutSession.setStripePaymentIntentId(completedEvent.getStripePaymentIntentId());
             checkoutSession.setStatus(CheckoutSessionStatus.FINALIZED);
@@ -735,11 +746,12 @@ public class CheckoutSessionService {
 
         if (checkoutSession.getStatus() == CheckoutSessionStatus.CANCELLED
                 || checkoutSession.getStatus() == CheckoutSessionStatus.EXPIRED
-                || checkoutSession.getStatus() == CheckoutSessionStatus.FAILED) {
-            markCheckoutFinalizationFailed(checkoutSession, completedEvent);
+                || checkoutSession.getStatus() == CheckoutSessionStatus.FAILED
+                || checkoutSession.getStatus() == CheckoutSessionStatus.REFUND_PENDING) {
+            scheduleRefund(checkoutSession, completedEvent);
             checkoutMetrics.recordReservationFinalizationFailure();
             logger.warn(
-                    "event=reservation_finalization_failed checkoutSessionId={} status={} reason=terminal_checkout_status",
+                    "event=reservation_finalization_refund_required checkoutSessionId={} status={} reason=terminal_checkout_status",
                     checkoutSession.getId(),
                     checkoutSession.getStatus()
             );
@@ -778,25 +790,54 @@ public class CheckoutSessionService {
                     seats.size()
             );
         } catch (SeatUnavailableException | IllegalStateException e) {
-            markCheckoutFinalizationFailed(checkoutSession, completedEvent);
+            scheduleRefund(checkoutSession, completedEvent);
             checkoutMetrics.recordReservationFinalizationFailure();
             logger.warn(
-                    "event=reservation_finalization_failed checkoutSessionId={} exception={}",
+                    "event=reservation_finalization_refund_required checkoutSessionId={} exception={}",
                     checkoutSession.getId(),
                     e.getClass().getSimpleName()
             );
         }
     }
 
-    private void markCheckoutFinalizationFailed(
+    private void scheduleRefund(
             CheckoutSession checkoutSession,
             StripeCheckoutCompletedEvent completedEvent
     ) {
         checkoutSession.setStripePaymentIntentId(completedEvent.getStripePaymentIntentId());
         checkoutSession.setFailedAt(LocalDateTime.now());
-        checkoutSession.setStatus(CheckoutSessionStatus.FAILED);
+        checkoutSession.setStatus(CheckoutSessionStatus.REFUND_PENDING);
+        checkoutSessionRepository.save(checkoutSession);
+        retryRefund(checkoutSession);
+    }
+
+    @Transactional
+    public void retryRefund(CheckoutSession checkoutSession) {
+        if (checkoutSession.getStatus() != CheckoutSessionStatus.REFUND_PENDING) {
+            return;
+        }
+
+        try {
+            String refundId = stripeCheckoutService.refundPaymentIntent(
+                    checkoutSession.getStripePaymentIntentId(),
+                    "checkout-refund-" + checkoutSession.getCheckoutReference()
+            );
+            checkoutSession.setStripeRefundId(refundId);
+            checkoutSession.setRefundedAt(LocalDateTime.now());
+            checkoutSession.setRefundError(null);
+            checkoutSession.setStatus(CheckoutSessionStatus.REFUNDED);
+        } catch (RuntimeException e) {
+            checkoutSession.setRefundError(truncateError(e));
+        }
 
         checkoutSessionRepository.save(checkoutSession);
+    }
+
+    private String truncateError(RuntimeException exception) {
+        String message = exception.getMessage() != null
+                ? exception.getMessage()
+                : exception.getClass().getName();
+        return message.length() <= 2000 ? message : message.substring(0, 2000);
     }
 
 
@@ -871,7 +912,9 @@ public class CheckoutSessionService {
         }
 
         if (checkoutSession.getStatus() == CheckoutSessionStatus.CANCELLED
-                || checkoutSession.getStatus() == CheckoutSessionStatus.EXPIRED) {
+                || checkoutSession.getStatus() == CheckoutSessionStatus.EXPIRED
+                || checkoutSession.getStatus() == CheckoutSessionStatus.REFUND_PENDING
+                || checkoutSession.getStatus() == CheckoutSessionStatus.REFUNDED) {
             logger.info(
                     "event=checkout_session_expiry_ignored checkoutSessionId={} reason=terminal_status status={}",
                     checkoutSession.getId(),

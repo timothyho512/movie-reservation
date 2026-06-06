@@ -155,6 +155,14 @@ public class RedisSeatLockService {
         return released;
     }
 
+    public int releaseAllLocksForShowtime(Long showtimeId) {
+        Set<String> keys = redisTemplate.keys(lockKeyPattern(showtimeId));
+        if (keys == null || keys.isEmpty()) {
+            return 0;
+        }
+        return Math.toIntExact(redisTemplate.delete(keys));
+    }
+
     private RedisSeatLockValue readLock(Long showtimeId, Long seatId) {
         String rawValue = redisTemplate.opsForValue().get(lockKey(showtimeId, seatId));
         if (rawValue == null) {
