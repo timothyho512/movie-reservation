@@ -1,12 +1,14 @@
 # Database ER Diagram
 
-This ERD reflects the current backend model after JWT ownership and Stripe Checkout integration.
+This ERD reflects the current backend model after JWT ownership, seat-layout
+versioning, Stripe Checkout integration, and refund lifecycle support.
 
 Use it when you need to understand how the API response fields map back to persisted data:
 
 - reservation responses come from `RESERVATION`, `SHOWTIME`, `MOVIE`, `SCREEN`, and `SEAT`
 - checkout status responses come from `CHECKOUT_SESSION`
-- seat-map availability comes from `SEAT`, active `SEAT_LOCK` rows, and existing `RESERVATION_SEATS`
+- live seat-map availability combines `SEAT`, Redis locks, and existing `RESERVATION_SEATS`
+- `SEAT_LOCK` rows provide durable audit history for temporary Redis locks
 - reliable follow-up events are recorded in `OUTBOX_EVENT`
 
 For local setup and seeded demo data, see `docs/local-development.md`.
@@ -19,8 +21,11 @@ erDiagram
 
     MOVIE ||--o{ SHOWTIME : has
     THEATRE ||--o{ SCREEN : has
+    SCREEN ||--o{ SCREEN_LAYOUT_VERSION : versions
     SCREEN ||--o{ SEAT : contains
     SCREEN ||--o{ SHOWTIME : hosts
+    SCREEN_LAYOUT_VERSION ||--o{ SEAT : defines
+    SCREEN_LAYOUT_VERSION ||--o{ SHOWTIME : used_by
 
     SHOWTIME ||--o{ RESERVATION : booked_for
     SHOWTIME ||--o{ SEAT_LOCK : locked_for
@@ -49,6 +54,9 @@ erDiagram
         BIGINT id PK
         STRING title
         STRING director
+        BOOLEAN active
+        DATETIME created_at
+        DATETIME updated_at
     }
 
     THEATRE {
@@ -70,6 +78,7 @@ erDiagram
     SCREEN {
         BIGINT id PK
         BIGINT theatre_id FK
+        BIGINT current_layout_version_id FK
         STRING name
         INT total_seats
         STRING screen_type
@@ -78,9 +87,19 @@ erDiagram
         DATETIME updated_at
     }
 
+    SCREEN_LAYOUT_VERSION {
+        BIGINT id PK
+        BIGINT screen_id FK
+        INT version_number
+        BOOLEAN active
+        DATETIME created_at
+        DATETIME updated_at
+    }
+
     SEAT {
         BIGINT id PK
         BIGINT screen_id FK
+        BIGINT layout_version_id FK
         STRING row_label
         INT seat_number
         STRING seat_type
@@ -94,6 +113,7 @@ erDiagram
         BIGINT id PK
         BIGINT movie_id FK
         BIGINT screen_id FK
+        BIGINT layout_version_id FK
         DATETIME start_time
         DATETIME end_time
         DECIMAL base_price
@@ -138,6 +158,9 @@ erDiagram
         DATETIME completed_at
         DATETIME failed_at
         DATETIME cancelled_at
+        STRING stripe_refund_id
+        DATETIME refunded_at
+        STRING refund_error
     }
 
     RESERVATION {
@@ -183,5 +206,9 @@ erDiagram
 - `SEAT_LOCK` is owned by exactly one authenticated `USER` or one guest identity pair: `guest_email + session_id`.
 - `CHECKOUT_SESSION` is owned by exactly one authenticated `USER` or one guest identity pair: `guest_email + guest_session_id`.
 - `CHECKOUT_SESSION.items_snapshot_json` stores a durable purchase snapshot of seats/items at payment time.
+- `CHECKOUT_SESSION.expires_at` uses the earliest selected Redis lock expiration and is also sent to Stripe.
+- `CHECKOUT_SESSION.stripe_refund_id`, `refunded_at`, and `refund_error` record late-payment refund recovery.
+- `SCREEN.current_layout_version_id` identifies the layout used by future showtimes.
+- Existing `SHOWTIME` rows retain their assigned layout version so historical bookings do not change.
 - `RESERVATION` is created only after Stripe confirms payment through the webhook.
 - `OUTBOX_EVENT` stores internal integration events. `aggregate_type + aggregate_id` identifies the related domain row without a direct foreign key.

@@ -313,7 +313,15 @@ Success: `200 OK`
 
 ### GET `/api/showtimes`
 
-Returns showtimes ordered by start time ascending.
+Returns customer-bookable showtimes ordered by start time ascending.
+
+Only showtimes that satisfy all of the following are returned:
+
+- status is `UPCOMING`
+- start time is more than the configured booking cutoff in the future
+- movie, screen, and theatre are active
+
+The default booking cutoff is 10 minutes.
 
 Auth: public
 
@@ -368,6 +376,12 @@ Returns all seats for the showtime screen with current availability.
 Auth: public
 
 Availability is `false` when a seat is already reserved or actively locked.
+This is a customer booking endpoint. It returns `409 Conflict` once booking is
+closed, including when the showtime is inside the cutoff, `ONGOING`,
+`COMPLETED`, or `CANCELLED`.
+
+Admin layout management uses `/api/admin/screens/{screenId}/seat-layout` and is
+not restricted by this customer booking check.
 
 Success: `200 OK`
 
@@ -443,6 +457,9 @@ Guest requests:
 
 Temporarily locks seats in Redis before payment. Postgres `seat_locks` rows are kept as audit/history records only; Redis is the active hold authority.
 
+Lock creation is rejected when the showtime starts within the booking cutoff.
+The default lock TTL is 1860 seconds (31 minutes).
+
 Auth: optional
 
 Optional header:
@@ -485,6 +502,14 @@ Creates a Stripe Checkout Session for the selected locked seats. This is the
 canonical real-payment entry point.
 
 All requested seats must still have active Redis holds owned by the caller.
+The local checkout expiration is copied from the earliest selected lock
+expiration. Stripe Checkout receives the same expiration timestamp, so creating
+the checkout does not restart the payment timer.
+
+Stripe requires that timestamp to be at least 30 minutes after Stripe Session
+creation. With the current 31-minute lock TTL, a delayed `/checkout/session`
+request can fall below that minimum. Increase the configured lock/payment
+window before production use or change when the Stripe Session is created.
 
 Auth: optional
 
@@ -531,20 +556,14 @@ Returns checkout status after redirecting back from Stripe.
 
 Auth: optional
 
-The backend uses the authenticated principal when provided. Guest status lookup
-requires the checkout reference plus the guest identity that created the session.
-
-Guest query parameters:
-
-| Query param | Required | Notes |
-| --- | ---: | --- |
-| `guestEmail` | yes | Must match the checkout session guest email |
-| `sessionId` | yes | Must match the guest seat-lock session id |
+The random checkout reference is treated as a bearer-style polling credential.
+No JWT, guest email, or guest session ID is required. Clients must avoid
+logging, exposing, or sharing this reference.
 
 Example:
 
 ```http
-GET /checkout/session/chk_abc123?guestEmail=guest@example.com&sessionId=guest-session-id
+GET /checkout/session/chk_abc123
 ```
 
 Success: `200 OK`
@@ -580,6 +599,29 @@ Expected production behavior:
 - `checkout.session.completed` finalizes the checkout, creates the reservation, and releases Redis holds
 - `checkout.session.expired` expires the checkout and releases Redis holds
 - duplicate webhooks should not create duplicate reservations
+- late successful payments that cannot produce a reservation are refunded
+- refund failures remain `REFUND_PENDING` and are retried by the scheduler
+
+Checkout completion uses a pessimistic lock on the local checkout row. Two
+simultaneous deliveries for the same Stripe Checkout Session are serialized:
+the first finalizes it and the second observes `FINALIZED` and exits safely.
+
+Possible checkout status values:
+
+| Status | Meaning |
+| --- | --- |
+| `PENDING_PAYMENT` | Hosted payment is still pending |
+| `PAID` | Payment recorded while finalization is pending; not the normal final state |
+| `FINALIZED` | Reservation was created successfully |
+| `FAILED` | Payment/finalization failed without a reservation |
+| `CANCELLED` | Customer cancelled before finalization |
+| `EXPIRED` | Local or Stripe checkout expired |
+| `REFUND_PENDING` | Payment succeeded but the reservation could not be fulfilled |
+| `REFUNDED` | Stripe refund completed |
+
+The local cleanup scheduler expires stale `PENDING_PAYMENT` sessions, asks
+Stripe to expire the hosted Checkout Session, releases Redis locks, expires
+audit locks, and evicts the affected seat-map cache.
 
 ### POST `/checkout/cancel`
 

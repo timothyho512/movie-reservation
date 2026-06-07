@@ -35,6 +35,50 @@ Copy the printed `whsec_...` value into `.env` as `STRIPE_WEBHOOK_SECRET`, then 
 - Guest ownership uses `guestEmail + sessionId`.
 - Authenticated ownership uses the JWT principal only.
 - Duplicate Stripe webhooks are safe: repeated completed/expired events do not create duplicate reservations.
+- New booking activity closes 10 minutes before the showtime starts.
+- Redis locks, Postgres audit locks, the local checkout, and Stripe Checkout use one coordinated payment deadline.
+- A paid checkout that cannot be finalized safely is automatically refunded.
+
+## Booking And Expiration Policy
+
+The default configuration is:
+
+```text
+Booking cutoff:        10 minutes before showtime
+Seat-lock/payment TTL: 1860 seconds (31 minutes)
+Cleanup frequency:     60 seconds
+```
+
+Creating a checkout does not restart the 31-minute timer. The checkout uses the
+earliest expiration timestamp of its selected Redis locks, and Stripe receives
+that same timestamp.
+
+Example:
+
+```text
+14:00 seats locked
+14:20 Stripe Checkout created
+14:31 Redis locks, local checkout, and Stripe Checkout reach their deadline
+```
+
+If selected locks have different expiration timestamps, the earliest timestamp
+is used because the purchase is unsafe as soon as any requested seat is no
+longer held.
+
+### Stripe Minimum Expiration Constraint
+
+Stripe requires a hosted Checkout Session's `expires_at` to be at least 30
+minutes after the Stripe Session creation request. Because the current lock
+deadline is only 31 minutes after the earlier lock request, creating Stripe
+Checkout more than roughly one minute later can leave less than Stripe's
+required 30-minute minimum.
+
+This is a known limitation of the current timing configuration. Before relying
+on this policy in production, increase the lock/payment window enough to cover
+normal seat-selection delay plus Stripe's minimum, or create the Stripe Session
+earlier in the flow. Local expiration and late-payment refunds protect
+consistency after a Session exists, but they do not make an invalid
+`expires_at` acceptable to Stripe during Session creation.
 
 ## POST `/checkout/lock`
 
@@ -169,22 +213,90 @@ Behavior:
 Completed webhook behavior:
 
 1. load checkout session by `stripeCheckoutSessionId`
-2. lock that database row while finalizing
+2. acquire a pessimistic database lock on that checkout row while finalizing
 3. exit safely if it is already `FINALIZED`
-4. fail safely if it was `CANCELLED`, `EXPIRED`, or `FAILED`
-5. validate the Redis holds are still active and owned by the checkout owner
-6. create reservation with `CONFIRMED + PAID`
-7. release Redis holds and mark audit locks `CONVERTED_TO_RESERVATION`
-8. link reservation to checkout session
-9. mark checkout session `FINALIZED`
+4. exit safely if it is already `REFUNDED`
+5. start an idempotent refund if it is `CANCELLED`, `EXPIRED`, `FAILED`, or `REFUND_PENDING`
+6. validate the Redis holds are still active and owned by the checkout owner
+7. validate the seats have not been reserved elsewhere
+8. create reservation with `CONFIRMED + PAID`
+9. release Redis holds and mark audit locks `CONVERTED_TO_RESERVATION`
+10. link reservation to checkout session
+11. mark checkout session `FINALIZED`
+
+The pessimistic checkout-row lock is held for the webhook transaction. If two
+deliveries for the same Stripe Checkout Session arrive simultaneously, the
+second waits, then observes the `FINALIZED` status written by the first. It does
+not create another reservation or refund the original payment.
+
+If payment succeeds but finalization cannot safely create the reservation, the
+checkout moves through:
+
+```text
+REFUND_PENDING -> REFUNDED
+```
+
+Refund requests use a stable Stripe idempotency key based on the checkout
+reference. A temporary refund failure leaves the checkout in `REFUND_PENDING`,
+records `refundError`, and is retried by the cleanup scheduler.
 
 Expired webhook behavior:
 
-1. load checkout session by `stripeCheckoutSessionId`
-2. lock that database row while expiring
-3. exit safely if it is already `FINALIZED`, `CANCELLED`, or `EXPIRED`
-4. release the active Redis holds for the checkout session and mark audit locks `EXPIRED`
-5. mark checkout session `EXPIRED`
+1. load and lock the checkout by `stripeCheckoutSessionId`
+2. exit safely for an already terminal checkout
+3. release Redis holds owned by this checkout
+4. mark matching Postgres audit locks `EXPIRED`
+5. evict the cached seat map
+6. mark checkout session `EXPIRED`
+
+## Local Expiration
+
+The cleanup scheduler searches for:
+
+```text
+status = PENDING_PAYMENT
+expiresAt < current time
+```
+
+For every stale checkout it:
+
+1. asks Stripe to expire the hosted Checkout Session
+2. explicitly releases the checkout owner's Redis locks
+3. marks the Postgres audit locks `EXPIRED`
+4. evicts the showtime seat-map cache
+5. marks the local checkout `EXPIRED`
+6. records `CheckoutSessionExpired` in the transactional outbox
+
+Asking Stripe to expire a session calls Stripe's Checkout Session expiration
+API using the stored `stripeCheckoutSessionId`. This closes the hosted payment
+page so it cannot normally accept a new payment after the local deadline.
+
+Stripe is an external system, so expiration can race with payment completion or
+fail temporarily. Local cleanup still proceeds so seats are not held forever.
+If Stripe later reports a successful payment for an expired checkout, the
+backend does not create a reservation and instead starts the refund flow.
+
+## Redis And Checkout Relationship
+
+The three related records have different responsibilities:
+
+| Record | Purpose |
+| --- | --- |
+| Redis seat lock | Fast active ownership check that prevents concurrent seat selection |
+| Postgres `seat_locks` row | Durable audit record of the lock and its final status |
+| Postgres `checkout_sessions` row | Payment attempt, selected-seat snapshot, Stripe IDs, and payment lifecycle |
+
+Redis TTL enforcement is immediate, while the Postgres checkout changes to
+`EXPIRED` when the scheduler runs. A short interval can therefore exist where:
+
+```text
+Redis lock: missing
+Checkout: PENDING_PAYMENT with an elapsed expiresAt
+```
+
+A completed webhook in this interval cannot prove seat ownership. It creates no
+reservation and refunds the payment. This deliberately prioritizes preventing
+double booking.
 
 ## Transactional Outbox Events
 
@@ -249,7 +361,9 @@ Finalized response:
 - `FINALIZED`: payment completed and reservation was created
 - `EXPIRED`: Stripe checkout expired or local checkout timed out
 - `CANCELLED`: user cancelled the lock before payment finalized
-- `FAILED`: Stripe reported completion after the checkout could no longer be finalized safely
+- `FAILED`: payment/finalization failure that did not produce a reservation
+- `REFUND_PENDING`: Stripe accepted payment but reservation finalization failed; refund is still pending
+- `REFUNDED`: the late or unfulfillable payment was refunded
 - `PAID`: available enum value, not the normal final state in the current flow
 
 `LockStatus` values for Postgres audit rows:
@@ -259,7 +373,34 @@ Finalized response:
 - `EXPIRED`: hold was released, cancelled, or timed out
 - `PROCESSING`: legacy value kept for old data/tests; not used by the Redis flow
 
-Redis hold keys expire naturally after `app.seat-lock.ttl-seconds`, currently 900 seconds.
+Redis hold keys expire naturally after `app.seat-lock.ttl-seconds`, currently
+1860 seconds. Checkout cleanup also releases them explicitly.
+
+## Showtime Lifecycle
+
+`ShowtimeLifecycleScheduler` runs every 60 seconds and applies idempotent bulk
+transitions:
+
+```text
+UPCOMING and startTime <= now < endTime -> ONGOING
+UPCOMING or ONGOING and endTime <= now -> COMPLETED
+paid CONFIRMED reservations for completed showtimes -> COMPLETED
+```
+
+Cancelled showtimes and cancelled reservations remain cancelled.
+
+When a showtime starts or completes, lifecycle cleanup also:
+
+- expires remaining `PENDING_PAYMENT` checkouts for that showtime
+- asks Stripe to expire their hosted sessions
+- releases remaining Redis locks
+- expires active Postgres audit locks
+- evicts the showtime seat-map cache
+
+Customer showtime lists return only active `UPCOMING` showtimes that start more
+than 10 minutes in the future. The customer seat-map endpoint also rejects
+closed showtimes. Admin seat-layout management uses separate `/api/admin/**`
+endpoints and is not blocked by the customer booking cutoff.
 
 ## Lifecycle
 
@@ -309,4 +450,10 @@ Current backend tests cover:
 - expired webhook lock release
 - duplicate expired webhook idempotency
 - unknown/unhandled webhook events returning safely
-- cancelled/expired checkout completion failure paths
+- cancelled/expired checkout late-payment refunds
+- missing or expired Redis lock refunds
+- failed refund retry from `REFUND_PENDING` to `REFUNDED`
+- booking cutoff rejection and customer showtime filtering
+- exact showtime start/end boundaries and repeated scheduler execution
+- paid reservation completion
+- cancelled reservation and cancelled showtime preservation

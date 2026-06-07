@@ -37,6 +37,43 @@ Redis stores active temporary seat holds and short-lived seat-map cache entries.
 
 The backend also runs a scheduled transactional outbox worker locally. It publishes due outbox events to RabbitMQ, where the first async worker logs booking email work without calling a real email provider.
 
+The backend also runs two one-minute maintenance processes:
+
+- checkout cleanup expires stale pending payments, closes their Stripe Checkout Sessions, releases locks, and retries pending refunds
+- showtime lifecycle processing changes `UPCOMING` showtimes to `ONGOING`, changes ended showtimes to `COMPLETED`, and completes their paid confirmed reservations
+
+## Booking Timing Configuration
+
+Default local values:
+
+```sh
+SEAT_LOCK_TTL_SECONDS=1860
+BOOKING_CUTOFF_MINUTES=10
+```
+
+`SEAT_LOCK_TTL_SECONDS` controls the active Redis hold and payment deadline.
+The local checkout copies the earliest selected lock expiration, and Stripe
+Checkout receives the same timestamp.
+
+Stripe requires hosted Checkout expiration to be at least 30 minutes after the
+Stripe Session is created. The current 31-minute default therefore only leaves
+about one minute between locking seats and creating Stripe Checkout. For
+realistic manual testing, set a longer value, for example:
+
+```sh
+SEAT_LOCK_TTL_SECONDS=3600
+```
+
+This keeps the implemented coordination behavior while providing enough time
+to navigate from seat selection to Stripe.
+
+`BOOKING_CUTOFF_MINUTES` closes new customer booking activity before the
+showtime begins. With the default value, a 19:00 showtime stops accepting new
+locks and checkouts at 18:50.
+
+These variables are optional because the application has the defaults above.
+Add them to `.env` when testing a different timing policy.
+
 ## Observability
 
 Prometheus and Grafana are available through Docker Compose for local monitoring:
