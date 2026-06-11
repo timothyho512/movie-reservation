@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { getTheatres } from "@/lib/api/theatres";
 import { TheatreCard } from "@/components/theatres/TheatreCard";
 
-export const revalidate = 300; // ISR: rebuild every 5 minutes
+export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Theatres" };
 
 export default async function TheatresPage() {

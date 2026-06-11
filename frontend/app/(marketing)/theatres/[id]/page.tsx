@@ -1,4 +1,4 @@
-export const revalidate = 300; // ISR: rebuild every 5 minutes
+export const dynamic = "force-dynamic";
 
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
