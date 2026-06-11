@@ -8,6 +8,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -47,7 +48,9 @@ public class RedisSeatLockService {
     }
 
     public RedisSeatLockBatch createLocks(Long showtimeId, Collection<Long> seatIds, RedisSeatLockOwner owner) {
-        LocalDateTime lockedAt = LocalDateTime.now();
+        // PostgreSQL stores these timestamps with microsecond precision. Normalize before
+        // returning and persisting so idempotent replays return the exact original value.
+        LocalDateTime lockedAt = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS);
         LocalDateTime defaultExpiresAt = lockedAt.plusSeconds(seatLockProperties.getTtlSeconds());
         Duration ttl = Duration.ofSeconds(seatLockProperties.getTtlSeconds());
         List<Long> lockedSeatIds = new ArrayList<>();
