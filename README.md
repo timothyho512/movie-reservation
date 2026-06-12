@@ -271,10 +271,20 @@ docker compose up -d prometheus grafana
 Grafana uses `admin` / `admin` by default unless overridden through environment
 variables.
 
+## Deployment
+
+The repository includes a Docker-based Render configuration for the backend and
+environment examples for a Vercel frontend. The intended portfolio stack is
+Render, Neon, Upstash, CloudAMQP, Vercel, and Stripe test mode.
+
+See the [free-tier deployment guide](docs/deployment.md) for the provider setup,
+required environment variables, and deployment order.
+
 ## Documentation
 
 - [Backend API contract](docs/api/backend-api.md)
 - [Local development guide](docs/local-development.md)
+- [Free-tier deployment guide](docs/deployment.md)
 - [Checkout and payment lifecycle](docs/checkout/checkout-payment.md)
 - [RabbitMQ and transactional outbox](docs/async/rabbitmq-outbox-async-work.md)
 - [Reservation history and ownership](docs/reservations/reservation-history-details.md)

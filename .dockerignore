@@ -1,0 +1,15 @@
+.git
+.github
+.gradle
+.idea
+.env
+.env.*
+build
+bin
+docs
+frontend
+load-tests
+observability
+*.iml
+*.md
+docker-compose.yml
