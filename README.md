@@ -231,6 +231,10 @@ relative to the current date.
 
 These credentials are for local demo data only.
 
+The production portfolio deployment seeds the catalogue and customer account
+when `DEMO_DATA_ENABLED=true`. It intentionally leaves the administrator
+account disabled.
+
 ## Testing
 
 Start the test database and Redis:

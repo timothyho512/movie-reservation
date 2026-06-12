@@ -57,6 +57,12 @@ Render will ask for the following values when creating the Blueprint:
 `JWT_SECRET` is generated automatically by Render and does not need to be
 copied from the local `.env`.
 
+`DEMO_DATA_ENABLED=true` is supplied by `render.yaml`. On first startup it
+creates the portfolio catalogue, seats, future showtimes, and a demo customer.
+Production does not create the demo administrator unless
+`DEMO_ADMIN_ENABLED=true` is added manually. Keep that setting disabled for the
+public deployment.
+
 ## 3. Create the Render Backend
 
 1. Push these deployment files to GitHub.
@@ -72,6 +78,9 @@ The expected response is:
 ```json
 {"status":"UP"}
 ```
+
+The demo seeder is idempotent: redeploying does not duplicate the catalogue or
+demo accounts.
 
 ## 4. Deploy the Vercel Frontend
 

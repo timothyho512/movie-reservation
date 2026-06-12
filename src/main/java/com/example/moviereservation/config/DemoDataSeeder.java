@@ -3,9 +3,11 @@ package com.example.moviereservation.config;
 import com.example.moviereservation.entity.*;
 import com.example.moviereservation.repository.*;
 import org.springframework.boot.CommandLineRunner;
-import org.springframework.context.annotation.Profile;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -13,7 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Component
-@Profile("dev")
+@ConditionalOnProperty(name = "app.demo-data.enabled", havingValue = "true")
 public class DemoDataSeeder implements CommandLineRunner {
     private static final String DEMO_CUSTOMER_EMAIL = "demo.customer@example.com";
     private static final String DEMO_ADMIN_EMAIL = "demo.admin@example.com";
@@ -27,6 +29,7 @@ public class DemoDataSeeder implements CommandLineRunner {
     private final MovieRepository movieRepository;
     private final ShowtimeRepository showtimeRepository;
     private final PasswordEncoder passwordEncoder;
+    private final boolean adminEnabled;
 
     public DemoDataSeeder(
             UserRepository userRepository,
@@ -36,7 +39,8 @@ public class DemoDataSeeder implements CommandLineRunner {
             SeatRepository seatRepository,
             MovieRepository movieRepository,
             ShowtimeRepository showtimeRepository,
-            PasswordEncoder passwordEncoder
+            PasswordEncoder passwordEncoder,
+            @Value("${app.demo-data.admin-enabled:false}") boolean adminEnabled
     ) {
         this.userRepository = userRepository;
         this.theatreRepository = theatreRepository;
@@ -46,34 +50,22 @@ public class DemoDataSeeder implements CommandLineRunner {
         this.movieRepository = movieRepository;
         this.showtimeRepository = showtimeRepository;
         this.passwordEncoder = passwordEncoder;
+        this.adminEnabled = adminEnabled;
     }
 
     @Override
+    @Transactional
     public void run(String... args) {
-        if (userRepository.findByEmail(DEMO_CUSTOMER_EMAIL).isPresent()) {
+        seedDemoUsers();
+
+        if (movieRepository.findByTitle("Inception").isPresent()) {
             return;
         }
 
-        User customer = new User(
-                "Demo",
-                "Customer",
-                DEMO_CUSTOMER_EMAIL,
-                passwordEncoder.encode(DEMO_PASSWORD),
-                "07900000001"
-        );
-        customer.setRole(UserRole.CUSTOMER);
+        seedDemoCatalogue();
+    }
 
-        User admin = new User(
-                "Demo",
-                "Admin",
-                DEMO_ADMIN_EMAIL,
-                passwordEncoder.encode(DEMO_PASSWORD),
-                "07900000002"
-        );
-        admin.setRole(UserRole.ADMIN);
-
-        userRepository.saveAll(List.of(customer, admin));
-
+    private void seedDemoCatalogue() {
         Theatre odeon = new Theatre(
                 "Odeon Leicester Square",
                 "24-26 Leicester Square",
@@ -129,6 +121,32 @@ public class DemoDataSeeder implements CommandLineRunner {
                 showtime(movie3, odeonScreenOne, now.plusDays(2).withHour(15).withMinute(0), 125, "12.50"),
                 showtime(movie3, vueVip, now.plusDays(4).withHour(19).withMinute(30), 125, "16.00")
         ));
+    }
+
+    private void seedDemoUsers() {
+        if (userRepository.findByEmail(DEMO_CUSTOMER_EMAIL).isEmpty()) {
+            User customer = new User(
+                    "Demo",
+                    "Customer",
+                    DEMO_CUSTOMER_EMAIL,
+                    passwordEncoder.encode(DEMO_PASSWORD),
+                    "07900000001"
+            );
+            customer.setRole(UserRole.CUSTOMER);
+            userRepository.save(customer);
+        }
+
+        if (adminEnabled && userRepository.findByEmail(DEMO_ADMIN_EMAIL).isEmpty()) {
+            User admin = new User(
+                    "Demo",
+                    "Admin",
+                    DEMO_ADMIN_EMAIL,
+                    passwordEncoder.encode(DEMO_PASSWORD),
+                    "07900000002"
+            );
+            admin.setRole(UserRole.ADMIN);
+            userRepository.save(admin);
+        }
     }
 
     private Showtime showtime(Movie movie, Screen screen, LocalDateTime startTime, int durationMinutes, String basePrice) {
