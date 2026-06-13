@@ -39,7 +39,21 @@ async function proxy(request: NextRequest, params: Promise<{ path: string[] }>) 
     if (body) init.body = body;
   }
 
-  const res = await fetch(backendUrl, init);
+  let res: Response;
+  try {
+    res = await fetch(backendUrl, init);
+  } catch {
+    return Response.json(
+      {
+        code: "BACKEND_UNAVAILABLE",
+        message: "The backend is still waking up. Please try again shortly.",
+      },
+      {
+        status: 503,
+        headers: { "Retry-After": "10" },
+      }
+    );
+  }
 
   if (res.status === 204) {
     return new Response(null, {
