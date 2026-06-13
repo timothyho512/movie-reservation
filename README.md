@@ -9,8 +9,28 @@ verified Stripe webhooks, and reliable asynchronous processing.
 The project supports guest and authenticated checkout, customer booking history,
 cinema administration, operational reporting, and local observability.
 
-> Deployment and portfolio screenshots are the next project milestone. The
-> application currently runs locally with seeded demo data.
+## Live Demo
+
+- Frontend: [movie-reservation-beige.vercel.app](https://movie-reservation-beige.vercel.app)
+- Backend health: [Render health endpoint](https://movie-reservation-api-qehk.onrender.com/actuator/health)
+
+The portfolio deployment uses free infrastructure. Render puts the backend to
+sleep after inactivity, so the first request can take several minutes. The
+frontend displays a wake-up message and retries temporary client-side failures
+while the service starts.
+
+Stripe runs in test mode; no real payment is collected. Production
+administrator credentials are intentionally not published.
+
+## Screenshots
+
+### Movie And Showtime
+
+![Inception showtime page](docs/images/movie-showtimes.jpg)
+
+### Interactive Seat Selection
+
+![Seat selection with a VIP seat selected](docs/images/seat-selection.jpg)
 
 ## Highlights
 
@@ -120,14 +140,13 @@ broker is temporarily unavailable.
 
 ## Verified Results
 
-The backend suite currently contains **154 tests**, including authentication,
+The backend suite contains **150+ tests**, including authentication,
 authorization, checkout ownership, idempotency, webhook duplication, concurrent
 finalization, refunds, reporting, lifecycle processing, and observability.
 
-The frontend currently contains **8 focused unit/component tests** covering seat
-interaction, accessibility state, booking status badges, and lock expiry.
-
-Documented k6 results:
+The frontend currently contains **13 focused unit/component tests** covering seat
+interaction, accessibility state, booking status badges, lock expiry, checkout
+state isolation, and delayed backend wake-up messaging.
 
 | Scenario | Result |
 | --- | --- |
@@ -277,9 +296,19 @@ variables.
 
 ## Deployment
 
-The repository includes a Docker-based Render configuration for the backend and
-environment examples for a Vercel frontend. The intended portfolio stack is
-Render, Neon, Upstash, CloudAMQP, Vercel, and Stripe test mode.
+The public portfolio deployment uses:
+
+| Component | Provider |
+| --- | --- |
+| Next.js frontend | Vercel |
+| Spring Boot Docker service | Render |
+| PostgreSQL | Neon |
+| Redis | Upstash |
+| RabbitMQ | CloudAMQP |
+| Payments and webhooks | Stripe test mode |
+
+The repository includes the Render Blueprint, production Spring configuration,
+Docker image, Vercel environment example, and provider setup guide.
 
 See the [free-tier deployment guide](docs/deployment.md) for the provider setup,
 required environment variables, and deployment order.
@@ -297,17 +326,17 @@ required environment variables, and deployment order.
 
 ## Current Limitations
 
-- The application is not yet publicly deployed.
-- Portfolio screenshots and a walkthrough video have not yet been added.
+- Render's free service sleeps after inactivity and introduces a cold-start delay.
 - The first email worker logs booking email work instead of calling an email provider.
-- The default local seat-hold window should be reviewed before production use
-  because Stripe requires Checkout Sessions to expire at least 30 minutes after creation.
 - Prometheus and Grafana are currently configured for local development.
+- The portfolio deployment uses Stripe test mode and is not intended for real transactions.
 
 ## Roadmap
 
-- Deploy the Spring backend and managed infrastructure.
-- Deploy the Next.js frontend and configure production CORS and Stripe URLs.
-- Add portfolio screenshots and a short booking walkthrough.
 - Add Playwright end-to-end tests for booking and administration flows.
 - Integrate a transactional email provider.
+- Add hosted production observability.
+
+## License
+
+This project is available under the [MIT License](LICENSE).
