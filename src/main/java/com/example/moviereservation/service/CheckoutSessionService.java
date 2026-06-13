@@ -41,6 +41,7 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.HexFormat;
 
@@ -314,8 +315,17 @@ public class CheckoutSessionService {
     }
 
     private void validateSeatsBelongToShowtime(Showtime showtime, List<Seat> seats) {
+        Long showtimeLayoutVersionId = showtime.getLayoutVersion() != null
+                ? showtime.getLayoutVersion().getId()
+                : null;
+
         for (Seat seat : seats) {
-            if (!seat.getScreen().getId().equals(showtime.getScreen().getId())) {
+            Long seatLayoutVersionId = seat.getLayoutVersion() != null
+                    ? seat.getLayoutVersion().getId()
+                    : null;
+            if (!seat.isActive()
+                    || !seat.getScreen().getId().equals(showtime.getScreen().getId())
+                    || !Objects.equals(seatLayoutVersionId, showtimeLayoutVersionId)) {
                 throw new IllegalArgumentException("Seat " + seat.getId() + " does not belong to the specified showtime");
             }
         }

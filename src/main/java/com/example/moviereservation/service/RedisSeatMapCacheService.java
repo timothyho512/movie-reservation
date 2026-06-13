@@ -1,6 +1,7 @@
 package com.example.moviereservation.service;
 
 import com.example.moviereservation.config.SeatMapCacheProperties;
+import com.example.moviereservation.config.RedisKeyProperties;
 import com.example.moviereservation.dto.SeatMapResponse;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -11,20 +12,21 @@ import java.util.Optional;
 
 @Service
 public class RedisSeatMapCacheService {
-    private static final String SEAT_MAP_KEY_PREFIX = "seat-map:showtime:";
-
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final SeatMapCacheProperties seatMapCacheProperties;
+    private final String seatMapKeyPrefix;
 
     public RedisSeatMapCacheService(
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
-            SeatMapCacheProperties seatMapCacheProperties
+            SeatMapCacheProperties seatMapCacheProperties,
+            RedisKeyProperties redisKeyProperties
     ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.seatMapCacheProperties = seatMapCacheProperties;
+        this.seatMapKeyPrefix = redisKeyProperties.getKeyNamespace() + ":seat-map:showtime:";
     }
 
     public Optional<SeatMapResponse> get(Long showtimeId) {
@@ -58,6 +60,6 @@ public class RedisSeatMapCacheService {
     }
 
     private String cacheKey(Long showtimeId) {
-        return SEAT_MAP_KEY_PREFIX + showtimeId;
+        return seatMapKeyPrefix + showtimeId;
     }
 }

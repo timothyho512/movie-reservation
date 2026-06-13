@@ -45,6 +45,7 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 
@@ -418,10 +419,17 @@ public class CheckoutService {
     }
 
     private void validateSeatsBelongToShowtime(Showtime showtime, List<Seat> seats) {
-        // checks that all seatIds in the request belong to the same showtimeId
-        // this is equivalent to checking if they have the same screenId
+        Long showtimeLayoutVersionId = showtime.getLayoutVersion() != null
+                ? showtime.getLayoutVersion().getId()
+                : null;
+
         for (Seat seat : seats) {
-            if (!seat.getScreen().getId().equals(showtime.getScreen().getId())) {
+            Long seatLayoutVersionId = seat.getLayoutVersion() != null
+                    ? seat.getLayoutVersion().getId()
+                    : null;
+            if (!seat.isActive()
+                    || !seat.getScreen().getId().equals(showtime.getScreen().getId())
+                    || !Objects.equals(seatLayoutVersionId, showtimeLayoutVersionId)) {
                 throw new IllegalArgumentException("Seat " + seat.getId() + " does not belong to the specified showtime");
             }
         }

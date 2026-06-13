@@ -20,6 +20,8 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
+      - key: REDIS_KEY_NAMESPACE
+        value: movie-reservation:prod:v2
       - key: RABBITMQ_URL
         sync: false
       - key: RABBITMQ_ENABLED

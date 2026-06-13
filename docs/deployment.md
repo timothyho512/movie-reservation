@@ -57,6 +57,10 @@ Render will ask for the following values when creating the Blueprint:
 `JWT_SECRET` is generated automatically by Render and does not need to be
 copied from the local `.env`.
 
+`REDIS_KEY_NAMESPACE` is supplied by `render.yaml`. It keeps production
+seat-map caches and seat locks separate from local or older deployments, even
+when database IDs are reused.
+
 `DEMO_DATA_ENABLED=true` is supplied by `render.yaml`. On first startup it
 creates the portfolio catalogue, seats, future showtimes, and a demo customer.
 Production does not create the demo administrator unless

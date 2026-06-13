@@ -1,6 +1,7 @@
 package com.example.moviereservation.service;
 
 import com.example.moviereservation.Exception.SeatUnavailableException;
+import com.example.moviereservation.config.RedisKeyProperties;
 import com.example.moviereservation.config.SeatLockProperties;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -19,20 +20,21 @@ import java.util.UUID;
 
 @Service
 public class RedisSeatLockService {
-    private static final String LOCK_KEY_PREFIX = "seat-lock:showtime:";
-
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final SeatLockProperties seatLockProperties;
+    private final String lockKeyPrefix;
 
     public RedisSeatLockService(
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
-            SeatLockProperties seatLockProperties
+            SeatLockProperties seatLockProperties,
+            RedisKeyProperties redisKeyProperties
     ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.seatLockProperties = seatLockProperties;
+        this.lockKeyPrefix = redisKeyProperties.getKeyNamespace() + ":seat-lock:showtime:";
     }
 
     public RedisSeatLockOwner authenticatedOwner(Long userId) {
@@ -195,11 +197,11 @@ public class RedisSeatLockService {
     }
 
     private String lockKeyPattern(Long showtimeId) {
-        return LOCK_KEY_PREFIX + showtimeId + ":seat:*";
+        return lockKeyPrefix + showtimeId + ":seat:*";
     }
 
     private String lockKey(Long showtimeId, Long seatId) {
-        return LOCK_KEY_PREFIX + showtimeId + ":seat:" + seatId;
+        return lockKeyPrefix + showtimeId + ":seat:" + seatId;
     }
 
     private Long parseSeatId(String key) {
