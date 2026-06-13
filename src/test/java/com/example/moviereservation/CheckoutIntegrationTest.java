@@ -442,6 +442,8 @@ public class CheckoutIntegrationTest {
 
         assertThat(retryResponse.get("sessionId").asString())
                 .isEqualTo(firstResponse.get("sessionId").asString());
+        assertThat(firstResponse.get("expiresAt").asString())
+                .matches(".*(?:Z|[+-]\\d{2}:\\d{2})$");
         assertThat(retryResponse.get("expiresAt").asString())
                 .isEqualTo(firstResponse.get("expiresAt").asString());
         assertThat(retryResponse.get("lockedSeatIds")).hasSize(2);

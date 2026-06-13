@@ -1,6 +1,11 @@
 package com.example.moviereservation.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 public class CheckoutLockResponse {
@@ -29,8 +34,16 @@ public class CheckoutLockResponse {
         this.sessionId = sessionId;
     }
 
+    @JsonIgnore
     public LocalDateTime getExpiresAt() {
         return expiresAt;
+    }
+
+    @JsonProperty("expiresAt")
+    public OffsetDateTime getExpiresAtWithOffset() {
+        return expiresAt == null
+                ? null
+                : expiresAt.atZone(ZoneId.systemDefault()).toOffsetDateTime();
     }
 
     public void setExpiresAt(LocalDateTime expiresAt) {

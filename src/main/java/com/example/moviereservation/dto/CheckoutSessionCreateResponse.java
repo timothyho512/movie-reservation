@@ -1,8 +1,12 @@
 package com.example.moviereservation.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.example.moviereservation.entity.CheckoutSessionStatus;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 
 public class CheckoutSessionCreateResponse {
 
@@ -62,8 +66,16 @@ public class CheckoutSessionCreateResponse {
         this.status = status;
     }
 
+    @JsonIgnore
     public LocalDateTime getExpiresAt() {
         return expiresAt;
+    }
+
+    @JsonProperty("expiresAt")
+    public OffsetDateTime getExpiresAtWithOffset() {
+        return expiresAt == null
+                ? null
+                : expiresAt.atZone(ZoneId.systemDefault()).toOffsetDateTime();
     }
 
     public void setExpiresAt(LocalDateTime expiresAt) {
