@@ -3540,7 +3540,12 @@ public class CheckoutIntegrationTest {
                 seatLockRepository.save(lock);
 
                 seatLockCleanupService.expireTimedOutLocks();
-                redisTemplate.delete("seat-lock:showtime:" + showtime.getId() + ":seat:" + seat1.getId());
+                redisTemplate.delete(
+                        "movie-reservation:local:v1:seat-lock:showtime:"
+                                + showtime.getId()
+                                + ":seat:"
+                                + seat1.getId()
+                );
 
                 when(stripeCheckoutService.parseCheckoutCompletedEvent(any(), any()))
                         .thenReturn(new StripeCheckoutCompletedEvent(
