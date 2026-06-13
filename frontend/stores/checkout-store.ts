@@ -24,7 +24,20 @@ export const useCheckoutStore = create<CheckoutState>()((set) => ({
   expiresAt: null,
   checkoutReference: null,
 
-  setShowtimeId: (id) => set({ showtimeId: id }),
+  setShowtimeId: (id) =>
+    set((state) => {
+      if (state.showtimeId === id) {
+        return state;
+      }
+
+      return {
+        showtimeId: id,
+        selectedSeatIds: new Set(),
+        sessionId: null,
+        expiresAt: null,
+        checkoutReference: null,
+      };
+    }),
 
   toggleSeat: (seatId) =>
     set((state) => {
