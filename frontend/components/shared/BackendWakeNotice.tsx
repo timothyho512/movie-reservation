@@ -9,7 +9,11 @@ const WAKE_NOTICE_DELAY_MS = 4_000;
 export function BackendWakeNotice() {
   const activeRequests = useIsFetching();
 
-  return activeRequests > 0 ? <DelayedWakeNotice /> : null;
+  return <RequestWakeNotice active={activeRequests > 0} />;
+}
+
+export function RequestWakeNotice({ active }: { active: boolean }) {
+  return active ? <DelayedWakeNotice /> : null;
 }
 
 function DelayedWakeNotice() {

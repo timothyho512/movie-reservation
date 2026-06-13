@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth-store";
+import { RequestWakeNotice } from "@/components/shared/BackendWakeNotice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,13 +60,14 @@ export function LoginForm() {
   }
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardHeader>
-        <CardTitle>Sign In</CardTitle>
-        <CardDescription>Enter your credentials to continue</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+    <>
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle>Sign In</CardTitle>
+          <CardDescription>Enter your credentials to continue</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="email">Email</Label>
             <Input
@@ -97,18 +99,20 @@ export function LoginForm() {
           <Button type="submit" className="w-full" disabled={isSubmitting}>
             {isSubmitting ? "Signing in…" : "Sign In"}
           </Button>
-        </form>
+          </form>
 
-        <p className="mt-4 text-center text-sm text-muted-foreground">
-          No account?{" "}
-          <Link
-            href="/register"
-            className="underline underline-offset-2 hover:text-foreground"
-          >
-            Register
-          </Link>
-        </p>
-      </CardContent>
-    </Card>
+          <p className="mt-4 text-center text-sm text-muted-foreground">
+            No account?{" "}
+            <Link
+              href="/register"
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              Register
+            </Link>
+          </p>
+        </CardContent>
+      </Card>
+      <RequestWakeNotice active={isSubmitting} />
+    </>
   );
 }

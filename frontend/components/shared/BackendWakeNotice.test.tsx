@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BackendWakeNotice } from "./BackendWakeNotice";
+import { BackendWakeNotice, RequestWakeNotice } from "./BackendWakeNotice";
 
 function PendingQuery() {
   useQuery({
@@ -13,6 +13,7 @@ function PendingQuery() {
 
 describe("BackendWakeNotice", () => {
   afterEach(() => {
+    cleanup();
     vi.useRealTimers();
   });
 
@@ -36,5 +37,19 @@ describe("BackendWakeNotice", () => {
     });
 
     expect(screen.getByText("The demo server is waking up")).toBeInTheDocument();
+  });
+
+  it("can be used by a pending form submission", () => {
+    vi.useFakeTimers();
+    const { rerender } = render(<RequestWakeNotice active />);
+
+    act(() => {
+      vi.advanceTimersByTime(4_000);
+    });
+
+    expect(screen.getByText("The demo server is waking up")).toBeInTheDocument();
+
+    rerender(<RequestWakeNotice active={false} />);
+    expect(screen.queryByText("The demo server is waking up")).not.toBeInTheDocument();
   });
 });

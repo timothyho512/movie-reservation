@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth-store";
+import { RequestWakeNotice } from "@/components/shared/BackendWakeNotice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,13 +60,14 @@ export default function RegisterPage() {
   }
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardHeader>
-        <CardTitle>Create Account</CardTitle>
-        <CardDescription>Sign up to start booking movies</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+    <>
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle>Create Account</CardTitle>
+          <CardDescription>Sign up to start booking movies</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="firstName">First Name</Label>
@@ -120,18 +122,20 @@ export default function RegisterPage() {
           <Button type="submit" className="w-full" disabled={isSubmitting}>
             {isSubmitting ? "Creating account…" : "Create Account"}
           </Button>
-        </form>
+          </form>
 
-        <p className="mt-4 text-center text-sm text-muted-foreground">
-          Already have an account?{" "}
-          <Link
-            href="/login"
-            className="underline underline-offset-2 hover:text-foreground"
-          >
-            Sign in
-          </Link>
-        </p>
-      </CardContent>
-    </Card>
+          <p className="mt-4 text-center text-sm text-muted-foreground">
+            Already have an account?{" "}
+            <Link
+              href="/login"
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              Sign in
+            </Link>
+          </p>
+        </CardContent>
+      </Card>
+      <RequestWakeNotice active={isSubmitting} />
+    </>
   );
 }
