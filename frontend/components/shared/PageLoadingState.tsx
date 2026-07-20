@@ -27,7 +27,7 @@ export function PageLoadingState() {
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
           {showWakeMessage
             ? "The free backend sleeps when inactive. It may take a few minutes to start, so please keep this page open."
-            : "Fetching the latest cinema information…"}
+            : "Fetching the latest cinema information. If the demo server is asleep, it may take a few minutes to start."}
         </p>
       </div>
     </div>

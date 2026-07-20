@@ -12,6 +12,7 @@ describe("PageLoadingState", () => {
     render(<PageLoadingState />);
 
     expect(screen.getByText("Loading CineBook")).toBeInTheDocument();
+    expect(screen.getByText(/demo server is asleep/i)).toBeInTheDocument();
     expect(screen.queryByText("The demo server is waking up")).not.toBeInTheDocument();
 
     act(() => {
