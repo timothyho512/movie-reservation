@@ -116,7 +116,12 @@ Admin email: demo.admin@example.com
 Password: Password123!
 ```
 
-The seed includes 3 movies, 2 theatres, 3 screens, 90 seats, and several upcoming showtimes. Seeded showtimes are generated relative to the current date so checkout can lock and book seats immediately.
+The fallback seed includes 3 movies, 2 theatres, 3 screens, and 90 seats. When
+`TMDB_ACCESS_TOKEN` is present in `.env`, startup replaces the public catalogue
+with four currently playing UK films from TMDB. Startup and daily maintenance
+ensure a rolling 14-day showtime window, so checkout always has future sessions.
+If TMDB is unavailable, the last successful catalogue—or the fallback seed on
+a fresh database—continues to work.
 
 If your local database already has older demo data and you want a clean reseed:
 

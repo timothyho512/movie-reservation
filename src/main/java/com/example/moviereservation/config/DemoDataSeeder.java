@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.core.annotation.Order;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -15,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Component
+@Order(1)
 @ConditionalOnProperty(name = "app.demo-data.enabled", havingValue = "true")
 public class DemoDataSeeder implements CommandLineRunner {
     private static final String DEMO_CUSTOMER_EMAIL = "demo.customer@example.com";

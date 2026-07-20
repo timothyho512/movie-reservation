@@ -245,8 +245,10 @@ The `dev` profile seeds the following local accounts:
 | Customer | `demo.customer@example.com` | `Password123!` |
 | Administrator | `demo.admin@example.com` | `Password123!` |
 
-The seed also creates movies, theatres, screens, seats, and upcoming showtimes
-relative to the current date.
+The seed also creates fallback movies, theatres, screens, and seats. When a
+`TMDB_ACCESS_TOKEN` is configured, the public catalogue uses four currently
+playing UK films and their posters. Startup and daily maintenance keep a
+rolling 14-day showtime window populated automatically.
 
 These credentials are for local demo data only.
 

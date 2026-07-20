@@ -14,6 +14,18 @@ public interface ScreenRepository extends JpaRepository<Screen, Long>, JpaSpecif
 
     long countByTheatreIdAndActiveTrue(Long theatreId);
 
+    @Query("""
+            SELECT s
+            FROM Screen s
+            JOIN FETCH s.theatre t
+            LEFT JOIN FETCH s.currentLayoutVersion
+            WHERE s.active = true
+              AND t.active = true
+              AND s.currentLayoutVersion IS NOT NULL
+            ORDER BY t.name ASC, s.name ASC
+            """)
+    List<Screen> findActiveSchedulingScreens();
+
     @Modifying
     @Transactional
     @Query("UPDATE Screen s SET s.currentLayoutVersion = null")

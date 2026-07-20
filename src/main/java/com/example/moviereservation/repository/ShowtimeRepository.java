@@ -18,6 +18,20 @@ public interface ShowtimeRepository extends JpaRepository<Showtime, Long>, JpaSp
     List<Showtime> findAllByScreenId(Long screenId);
 
     @Query("""
+            SELECT CASE WHEN COUNT(st) > 0 THEN true ELSE false END
+            FROM Showtime st
+            WHERE st.screen.id = :screenId
+              AND st.status <> com.example.moviereservation.entity.ShowtimeStatus.CANCELLED
+              AND st.startTime < :endTime
+              AND st.endTime > :startTime
+            """)
+    boolean existsOverlappingShowtime(
+            @Param("screenId") Long screenId,
+            @Param("startTime") LocalDateTime startTime,
+            @Param("endTime") LocalDateTime endTime
+    );
+
+    @Query("""
             SELECT st
             FROM Showtime st
             JOIN FETCH st.movie m

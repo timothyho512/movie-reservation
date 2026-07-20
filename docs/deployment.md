@@ -53,6 +53,7 @@ Render will ask for the following values when creating the Blueprint:
 | `STRIPE_WEBHOOK_SECRET` | Stripe endpoint secret beginning with `whsec_`; a temporary placeholder is fine initially |
 | `STRIPE_SUCCESS_URL` | `https://YOUR-VERCEL-DOMAIN/checkout/success?checkoutReference={CHECKOUT_REFERENCE}` |
 | `STRIPE_CANCEL_URL` | `https://YOUR-VERCEL-DOMAIN/checkout/cancel?checkoutReference={CHECKOUT_REFERENCE}` |
+| `TMDB_ACCESS_TOKEN` | TMDB API Read Access Token used only by the backend |
 
 `JWT_SECRET` is generated automatically by Render and does not need to be
 copied from the local `.env`.
@@ -66,6 +67,13 @@ creates the portfolio catalogue, seats, future showtimes, and a demo customer.
 Production does not create the demo administrator unless
 `DEMO_ADMIN_ENABLED=true` is added manually. Keep that setting disabled for the
 public deployment.
+
+When `TMDB_ACCESS_TOKEN` is configured, every backend startup synchronizes four
+currently playing UK films from TMDB and stores their metadata in Postgres. A
+daily maintenance task refreshes that catalogue and maintains a rolling 14-day
+showtime window. If the free backend sleeps through the daily task, the next
+request wakes it and startup maintenance catches up automatically. A failed
+TMDB request preserves the last successful catalogue.
 
 ## 3. Create the Render Backend
 
@@ -83,8 +91,8 @@ The expected response is:
 {"status":"UP"}
 ```
 
-The demo seeder is idempotent: redeploying does not duplicate the catalogue or
-demo accounts.
+The demo seeder and rolling showtime generator are idempotent: redeploying does
+not duplicate the catalogue, showtimes, or demo accounts.
 
 ## 4. Deploy the Vercel Frontend
 
