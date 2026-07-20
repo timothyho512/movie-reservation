@@ -33,7 +33,11 @@ public class MovieService {
     }
 
     public List<MovieCardResponse> getMovieCards() {
-        return movieRepository.findAllByActiveTrueOrderByTitleAsc().stream()
+        List<Movie> nowPlaying = movieRepository.findAllByActiveTrueAndNowPlayingTrueOrderByTitleAsc();
+        List<Movie> catalogue = nowPlaying.isEmpty()
+                ? movieRepository.findAllByActiveTrueOrderByTitleAsc()
+                : nowPlaying;
+        return catalogue.stream()
                 .map(this::toMovieCardResponse)
                 .toList();
     }
@@ -56,6 +60,9 @@ public class MovieService {
                 movie.getId(),
                 movie.getTitle(),
                 movie.getDirector(),
+                movie.getPosterPath(),
+                movie.getOverview(),
+                movie.getRuntimeMinutes(),
                 showtimes
         );
     }
@@ -90,7 +97,8 @@ public class MovieService {
         return new MovieCardResponse(
                 movie.getId(),
                 movie.getTitle(),
-                movie.getDirector()
+                movie.getDirector(),
+                movie.getPosterPath()
         );
     }
 

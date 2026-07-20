@@ -9,6 +9,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 
 @Entity
 public class Movie {
@@ -17,6 +18,26 @@ public class Movie {
     private Long id;
     private String title;
     private String director;
+
+    @Column(unique = true)
+    private Long tmdbId;
+
+    private String posterPath;
+
+    @Column(length = 2000)
+    private String overview;
+
+    private LocalDate releaseDate;
+
+    private Integer runtimeMinutes;
+
+    @Column(nullable = false)
+    private boolean tmdbManaged;
+
+    @Column(nullable = false)
+    private boolean nowPlaying;
+
+    private LocalDateTime lastSyncedAt;
 
     @Column(nullable = false)
     private boolean active = true;
@@ -75,6 +96,70 @@ public class Movie {
 
     public void setDirector(String director) {
         this.director = director;
+    }
+
+    public Long getTmdbId() {
+        return tmdbId;
+    }
+
+    public void setTmdbId(Long tmdbId) {
+        this.tmdbId = tmdbId;
+    }
+
+    public String getPosterPath() {
+        return posterPath;
+    }
+
+    public void setPosterPath(String posterPath) {
+        this.posterPath = posterPath;
+    }
+
+    public String getOverview() {
+        return overview;
+    }
+
+    public void setOverview(String overview) {
+        this.overview = overview;
+    }
+
+    public LocalDate getReleaseDate() {
+        return releaseDate;
+    }
+
+    public void setReleaseDate(LocalDate releaseDate) {
+        this.releaseDate = releaseDate;
+    }
+
+    public Integer getRuntimeMinutes() {
+        return runtimeMinutes;
+    }
+
+    public void setRuntimeMinutes(Integer runtimeMinutes) {
+        this.runtimeMinutes = runtimeMinutes;
+    }
+
+    public boolean isTmdbManaged() {
+        return tmdbManaged;
+    }
+
+    public void setTmdbManaged(boolean tmdbManaged) {
+        this.tmdbManaged = tmdbManaged;
+    }
+
+    public boolean isNowPlaying() {
+        return nowPlaying;
+    }
+
+    public void setNowPlaying(boolean nowPlaying) {
+        this.nowPlaying = nowPlaying;
+    }
+
+    public LocalDateTime getLastSyncedAt() {
+        return lastSyncedAt;
+    }
+
+    public void setLastSyncedAt(LocalDateTime lastSyncedAt) {
+        this.lastSyncedAt = lastSyncedAt;
     }
 
     public boolean isActive() {

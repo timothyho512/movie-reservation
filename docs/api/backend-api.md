@@ -189,7 +189,9 @@ Success: `200 OK`
 
 ### GET `/api/movies`
 
-Returns movie cards for browsing.
+Returns the active TMDB now-playing catalogue when it is available, otherwise
+returns the active fallback catalogue. TMDB metadata is synchronized and cached
+by the backend; this endpoint does not call TMDB directly.
 
 Auth: public
 
@@ -200,7 +202,8 @@ Success: `200 OK`
   {
     "id": 1,
     "title": "Inception",
-    "director": "Christopher Nolan"
+    "director": "Christopher Nolan",
+    "posterPath": "/example-poster.jpg"
   }
 ]
 ```
@@ -218,6 +221,9 @@ Success: `200 OK`
   "id": 1,
   "title": "Inception",
   "director": "Christopher Nolan",
+  "posterPath": "/example-poster.jpg",
+  "overview": "A skilled extractor is offered a chance to erase his past.",
+  "runtimeMinutes": 148,
   "showtimes": [
     {
       "id": 10,

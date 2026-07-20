@@ -4,14 +4,16 @@ public class MovieCardResponse {
     private Long id;
     private String title;
     private String director;
+    private String posterPath;
 
     public MovieCardResponse() {
     }
 
-    public MovieCardResponse(Long id, String title, String director) {
+    public MovieCardResponse(Long id, String title, String director, String posterPath) {
         this.id = id;
         this.title = title;
         this.director = director;
+        this.posterPath = posterPath;
     }
 
     public Long getId() {
@@ -36,5 +38,13 @@ public class MovieCardResponse {
 
     public void setDirector(String director) {
         this.director = director;
+    }
+
+    public String getPosterPath() {
+        return posterPath;
+    }
+
+    public void setPosterPath(String posterPath) {
+        this.posterPath = posterPath;
     }
 }

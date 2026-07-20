@@ -9,5 +9,8 @@ import java.util.Optional;
 
 public interface MovieRepository extends JpaRepository<Movie, Long>, JpaSpecificationExecutor<Movie> {
     List<Movie> findAllByActiveTrueOrderByTitleAsc();
+    List<Movie> findAllByActiveTrueAndNowPlayingTrueOrderByTitleAsc();
+    List<Movie> findAllByTmdbManagedTrue();
+    Optional<Movie> findByTmdbId(Long tmdbId);
     Optional<Movie> findByTitle(String title);
 }

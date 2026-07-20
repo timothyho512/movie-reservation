@@ -173,7 +173,11 @@ public class AdminManagementService {
     }
 
     private AdminMovieResponse movieResponse(Movie movie) {
-        return new AdminMovieResponse(movie.getId(), movie.getTitle(), movie.getDirector(), movie.isActive(), movie.getCreatedAt(), movie.getUpdatedAt());
+        return new AdminMovieResponse(
+                movie.getId(), movie.getTitle(), movie.getDirector(), movie.getPosterPath(),
+                movie.isTmdbManaged(), movie.isNowPlaying(), movie.isActive(),
+                movie.getCreatedAt(), movie.getUpdatedAt()
+        );
     }
 
     private AdminTheatreResponse theatreResponse(Theatre theatre) {
