@@ -10,7 +10,7 @@ public class TmdbProperties {
     private String apiBaseUrl = "https://api.themoviedb.org/3";
     private String region = "GB";
     private String language = "en-GB";
-    private int catalogueSize = 4;
+    private int catalogueSize = 12;
     private int requestTimeoutSeconds = 8;
 
     public boolean isConfigured() {

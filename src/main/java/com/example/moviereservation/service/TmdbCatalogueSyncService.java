@@ -16,6 +16,7 @@ import java.util.Map;
 @Service
 public class TmdbCatalogueSyncService {
     private static final Logger logger = LoggerFactory.getLogger(TmdbCatalogueSyncService.class);
+    private static final int STARTUP_STALE_AFTER_HOURS = 20;
 
     private final TmdbGateway tmdbGateway;
     private final MovieRepository movieRepository;
@@ -23,6 +24,24 @@ public class TmdbCatalogueSyncService {
     public TmdbCatalogueSyncService(TmdbGateway tmdbGateway, MovieRepository movieRepository) {
         this.tmdbGateway = tmdbGateway;
         this.movieRepository = movieRepository;
+    }
+
+    public SyncResult synchronizeIfStale(LocalDateTime now) {
+        if (!tmdbGateway.isConfigured()) {
+            logger.info("event=tmdb_catalogue_sync_skipped reason=token_not_configured");
+            return new SyncResult(false, 0);
+        }
+        LocalDateTime staleBefore = now.minusHours(STARTUP_STALE_AFTER_HOURS);
+        boolean fresh = movieRepository
+                .findFirstByTmdbManagedTrueAndLastSyncedAtIsNotNullOrderByLastSyncedAtDesc()
+                .map(Movie::getLastSyncedAt)
+                .filter(lastSyncedAt -> !lastSyncedAt.isBefore(staleBefore))
+                .isPresent();
+        if (fresh) {
+            logger.info("event=tmdb_catalogue_sync_skipped reason=catalogue_fresh");
+            return new SyncResult(false, 0);
+        }
+        return synchronize();
     }
 
     @Transactional
@@ -58,6 +77,7 @@ public class TmdbCatalogueSyncService {
                 movie = new Movie();
                 movie.setTmdbId(incoming.tmdbId());
                 movie.setTmdbManaged(true);
+                movie.setActive(true);
                 managedMovies.add(movie);
             }
             movie.setTitle(incoming.title());
@@ -67,7 +87,6 @@ public class TmdbCatalogueSyncService {
             movie.setReleaseDate(incoming.releaseDate());
             movie.setRuntimeMinutes(incoming.runtimeMinutes());
             movie.setNowPlaying(true);
-            movie.setActive(true);
             movie.setLastSyncedAt(syncedAt);
         }
 

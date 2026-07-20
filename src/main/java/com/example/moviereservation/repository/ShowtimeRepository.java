@@ -1,5 +1,6 @@
 package com.example.moviereservation.repository;
 
+import com.example.moviereservation.entity.Movie;
 import com.example.moviereservation.entity.Showtime;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -16,6 +17,33 @@ public interface ShowtimeRepository extends JpaRepository<Showtime, Long>, JpaSp
     List<Showtime> findAllByMovieIdOrderByStartTimeAsc(Long movieId);
 
     List<Showtime> findAllByScreenId(Long screenId);
+
+    @Query("""
+            SELECT DISTINCT m
+            FROM Showtime st
+            JOIN st.movie m
+            JOIN st.screen sc
+            JOIN sc.theatre t
+            WHERE st.status = com.example.moviereservation.entity.ShowtimeStatus.UPCOMING
+              AND st.startTime > :bookingCutoff
+              AND m.active = true
+              AND sc.active = true
+              AND t.active = true
+            ORDER BY m.title ASC
+            """)
+    List<Movie> findMoviesWithBookableShowtimes(@Param("bookingCutoff") LocalDateTime bookingCutoff);
+
+    @Query("""
+            SELECT CASE WHEN COUNT(st) > 0 THEN true ELSE false END
+            FROM Showtime st
+            WHERE st.movie.id = :movieId
+              AND st.status = com.example.moviereservation.entity.ShowtimeStatus.UPCOMING
+              AND st.startTime > :bookingCutoff
+            """)
+    boolean existsFutureShowtimeForMovie(
+            @Param("movieId") Long movieId,
+            @Param("bookingCutoff") LocalDateTime bookingCutoff
+    );
 
     @Query("""
             SELECT CASE WHEN COUNT(st) > 0 THEN true ELSE false END

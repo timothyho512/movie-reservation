@@ -4,6 +4,7 @@ import com.example.moviereservation.Exception.ResourceNotFoundException;
 import com.example.moviereservation.dto.MovieRequest;
 import com.example.moviereservation.entity.Movie;
 import com.example.moviereservation.repository.MovieRepository;
+import com.example.moviereservation.repository.ShowtimeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,14 +17,22 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class MovieServiceTest {
     @Mock
     private MovieRepository movieRepository;
+
+    @Mock
+    private ShowtimeRepository showtimeRepository;
+
+    @Mock
+    private BookingWindowService bookingWindowService;
 
     @InjectMocks
     private MovieService movieService;
@@ -63,6 +72,19 @@ public class MovieServiceTest {
 
         assertTrue(actualMovies.isEmpty());
         verify(movieRepository, times(1)).findAll();
+    }
+
+    @Test
+    void getMovieCards_ReturnsOnlyMoviesWithBookableShowtimes() {
+        LocalDateTime cutoff = LocalDateTime.of(2026, 7, 20, 10, 10);
+        when(bookingWindowService.bookingCutoffFrom(any(LocalDateTime.class))).thenReturn(cutoff);
+        when(showtimeRepository.findMoviesWithBookableShowtimes(cutoff)).thenReturn(List.of(testMovie));
+
+        var result = movieService.getMovieCards();
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().getTitle()).isEqualTo("Inception");
+        verify(showtimeRepository).findMoviesWithBookableShowtimes(cutoff);
     }
 
     @Test
@@ -186,6 +208,7 @@ public class MovieServiceTest {
     @Test
     void deleteMovie_Success() {
         when(movieRepository.findById(1L)).thenReturn(Optional.of(testMovie));
+        when(showtimeRepository.existsFutureShowtimeForMovie(eq(1L), any(LocalDateTime.class))).thenReturn(false);
         when(movieRepository.save(testMovie)).thenReturn(testMovie);
 
         movieService.deleteMovie(1L);
@@ -193,6 +216,20 @@ public class MovieServiceTest {
         verify(movieRepository, times(1)).findById(1L);
         verify(movieRepository, times(1)).save(testMovie);
         assertFalse(testMovie.isActive());
+    }
+
+    @Test
+    void deleteMovie_WithFutureShowtime_IsRejected() {
+        when(movieRepository.findById(1L)).thenReturn(Optional.of(testMovie));
+        when(showtimeRepository.existsFutureShowtimeForMovie(eq(1L), any(LocalDateTime.class))).thenReturn(true);
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> movieService.deleteMovie(1L)
+        );
+
+        assertTrue(exception.getMessage().contains("future showtimes"));
+        verify(movieRepository, never()).save(any(Movie.class));
     }
 
     @Test

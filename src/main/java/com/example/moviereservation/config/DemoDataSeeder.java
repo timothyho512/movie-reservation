@@ -11,7 +11,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.core.annotation.Order;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -29,7 +28,6 @@ public class DemoDataSeeder implements CommandLineRunner {
     private final ScreenLayoutVersionRepository screenLayoutVersionRepository;
     private final SeatRepository seatRepository;
     private final MovieRepository movieRepository;
-    private final ShowtimeRepository showtimeRepository;
     private final PasswordEncoder passwordEncoder;
     private final boolean adminEnabled;
 
@@ -40,7 +38,6 @@ public class DemoDataSeeder implements CommandLineRunner {
             ScreenLayoutVersionRepository screenLayoutVersionRepository,
             SeatRepository seatRepository,
             MovieRepository movieRepository,
-            ShowtimeRepository showtimeRepository,
             PasswordEncoder passwordEncoder,
             @Value("${app.demo-data.admin-enabled:false}") boolean adminEnabled
     ) {
@@ -50,7 +47,6 @@ public class DemoDataSeeder implements CommandLineRunner {
         this.screenLayoutVersionRepository = screenLayoutVersionRepository;
         this.seatRepository = seatRepository;
         this.movieRepository = movieRepository;
-        this.showtimeRepository = showtimeRepository;
         this.passwordEncoder = passwordEncoder;
         this.adminEnabled = adminEnabled;
     }
@@ -113,16 +109,6 @@ public class DemoDataSeeder implements CommandLineRunner {
 
         movieRepository.saveAll(List.of(movie1, movie2, movie3));
 
-        LocalDateTime now = LocalDateTime.now().withSecond(0).withNano(0);
-
-        showtimeRepository.saveAll(List.of(
-                showtime(movie1, odeonScreenOne, now.plusDays(1).withHour(18).withMinute(30), 148, "14.00"),
-                showtime(movie1, vueVip, now.plusDays(2).withHour(20).withMinute(0), 148, "18.50"),
-                showtime(movie2, odeonImax, now.plusDays(1).withHour(20).withMinute(15), 166, "19.00"),
-                showtime(movie2, odeonImax, now.plusDays(3).withHour(17).withMinute(45), 166, "19.00"),
-                showtime(movie3, odeonScreenOne, now.plusDays(2).withHour(15).withMinute(0), 125, "12.50"),
-                showtime(movie3, vueVip, now.plusDays(4).withHour(19).withMinute(30), 125, "16.00")
-        ));
     }
 
     private void seedDemoUsers() {
@@ -149,16 +135,6 @@ public class DemoDataSeeder implements CommandLineRunner {
             admin.setRole(UserRole.ADMIN);
             userRepository.save(admin);
         }
-    }
-
-    private Showtime showtime(Movie movie, Screen screen, LocalDateTime startTime, int durationMinutes, String basePrice) {
-        return new Showtime(
-                movie,
-                screen,
-                startTime,
-                startTime.plusMinutes(durationMinutes),
-                new BigDecimal(basePrice)
-        );
     }
 
     private List<Seat> buildSeats(Screen screen) {

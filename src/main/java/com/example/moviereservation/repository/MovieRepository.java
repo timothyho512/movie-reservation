@@ -13,4 +13,5 @@ public interface MovieRepository extends JpaRepository<Movie, Long>, JpaSpecific
     List<Movie> findAllByTmdbManagedTrue();
     Optional<Movie> findByTmdbId(Long tmdbId);
     Optional<Movie> findByTitle(String title);
+    Optional<Movie> findFirstByTmdbManagedTrueAndLastSyncedAtIsNotNullOrderByLastSyncedAtDesc();
 }

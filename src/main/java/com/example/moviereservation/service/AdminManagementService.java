@@ -124,6 +124,9 @@ public class AdminManagementService {
     public AdminMovieResponse setMovieActive(Long id, boolean active) {
         Movie movie = movieRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Movie not found with id: " + id));
+        if (!active && showtimeRepository.existsFutureShowtimeForMovie(id, LocalDateTime.now())) {
+            throw new IllegalArgumentException("Cannot deactivate a movie with future showtimes");
+        }
         movie.setActive(active);
         return movieResponse(movieRepository.save(movie));
     }

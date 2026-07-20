@@ -6,7 +6,6 @@ import com.example.moviereservation.repository.MovieRepository;
 import com.example.moviereservation.repository.ScreenLayoutVersionRepository;
 import com.example.moviereservation.repository.ScreenRepository;
 import com.example.moviereservation.repository.SeatRepository;
-import com.example.moviereservation.repository.ShowtimeRepository;
 import com.example.moviereservation.repository.TheatreRepository;
 import com.example.moviereservation.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -33,7 +32,6 @@ class DemoDataSeederTest {
     @Mock private ScreenLayoutVersionRepository screenLayoutVersionRepository;
     @Mock private SeatRepository seatRepository;
     @Mock private MovieRepository movieRepository;
-    @Mock private ShowtimeRepository showtimeRepository;
     @Mock private PasswordEncoder passwordEncoder;
 
     @Test
@@ -57,7 +55,6 @@ class DemoDataSeederTest {
         seeder(false).run();
 
         verify(theatreRepository, never()).saveAll(any());
-        verify(showtimeRepository, never()).saveAll(any());
     }
 
     private DemoDataSeeder seeder(boolean adminEnabled) {
@@ -68,7 +65,6 @@ class DemoDataSeederTest {
                 screenLayoutVersionRepository,
                 seatRepository,
                 movieRepository,
-                showtimeRepository,
                 passwordEncoder,
                 adminEnabled
         );

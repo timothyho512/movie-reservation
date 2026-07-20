@@ -23,6 +23,10 @@ public class Showtime {
     private Screen screen;  // Which screen it's showing in
 
     @ManyToOne
+    @JoinColumn(name = "programme_entry_id")
+    private ProgrammeEntry programmeEntry;
+
+    @ManyToOne
     @JoinColumn(name = "layout_version_id")
     private ScreenLayoutVersion layoutVersion;
 
@@ -91,11 +95,35 @@ public class Showtime {
     }
 
     public void setMovie(Movie movie) {
+        if (programmeEntry != null
+                && programmeEntry.getMovie() != null
+                && programmeEntry.getMovie().getId() != null
+                && movie != null
+                && movie.getId() != null
+                && !programmeEntry.getMovie().getId().equals(movie.getId())) {
+            throw new IllegalArgumentException("Showtime movie must match programme entry movie");
+        }
         this.movie = movie;
     }
 
     public Screen getScreen() {
         return screen;
+    }
+
+    public ProgrammeEntry getProgrammeEntry() {
+        return programmeEntry;
+    }
+
+    public void setProgrammeEntry(ProgrammeEntry programmeEntry) {
+        if (programmeEntry != null
+                && movie != null
+                && programmeEntry.getMovie() != null
+                && programmeEntry.getMovie().getId() != null
+                && movie.getId() != null
+                && !programmeEntry.getMovie().getId().equals(movie.getId())) {
+            throw new IllegalArgumentException("Showtime movie must match programme entry movie");
+        }
+        this.programmeEntry = programmeEntry;
     }
 
     public void setScreen(Screen screen) {

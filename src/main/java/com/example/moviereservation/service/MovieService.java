@@ -33,18 +33,16 @@ public class MovieService {
     }
 
     public List<MovieCardResponse> getMovieCards() {
-        List<Movie> nowPlaying = movieRepository.findAllByActiveTrueAndNowPlayingTrueOrderByTitleAsc();
-        List<Movie> catalogue = nowPlaying.isEmpty()
-                ? movieRepository.findAllByActiveTrueOrderByTitleAsc()
-                : nowPlaying;
-        return catalogue.stream()
+        return showtimeRepository.findMoviesWithBookableShowtimes(
+                        bookingWindowService.bookingCutoffFrom(LocalDateTime.now())
+                ).stream()
                 .map(this::toMovieCardResponse)
                 .toList();
     }
 
     public Movie getMovieById(Long id) {
         return movieRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Screen not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Movie not found with id: " + id));
     }
 
     public MovieDetailResponse getMovieDetail(Long id) {
@@ -89,6 +87,12 @@ public class MovieService {
 
     public void deleteMovie(Long id) {
         Movie movie = getMovieById(id);
+        if (showtimeRepository.existsFutureShowtimeForMovie(
+                id,
+                LocalDateTime.now()
+        )) {
+            throw new IllegalArgumentException("Cannot deactivate a movie with future showtimes");
+        }
         movie.setActive(false);
         movieRepository.save(movie);
     }
