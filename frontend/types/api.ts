@@ -81,6 +81,7 @@ export interface MovieCardResponse {
   id: number;
   title: string;
   director: string;
+  posterPath: string | null;
 }
 
 /** Returned by GET /api/movies/{id} */
@@ -88,6 +89,9 @@ export interface MovieDetailResponse {
   id: number;
   title: string;
   director: string;
+  posterPath: string | null;
+  overview: string | null;
+  runtimeMinutes: number | null;
   showtimes: ShowtimeSummaryResponse[];
 }
 
@@ -294,6 +298,8 @@ export interface PageResponse<T> {
 }
 
 export interface AdminMovieResponse extends MovieCardResponse {
+  tmdbManaged: boolean;
+  nowPlaying: boolean;
   active: boolean;
   createdAt: string;
   updatedAt: string;
