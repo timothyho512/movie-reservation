@@ -650,6 +650,9 @@ Success: `200 OK`
 
 ### POST `/checkout/confirm`
 
+> Development/test only. This endpoint is registered only when
+> `app.legacy-checkout.enabled=true` and is disabled in production.
+
 Legacy fake-payment endpoint retained for development/tests.
 
 Auth: optional

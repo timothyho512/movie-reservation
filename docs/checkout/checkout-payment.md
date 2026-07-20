@@ -11,7 +11,10 @@ The frontend should treat this as the production-style booking path:
 5. poll checkout status
 6. show the finalized reservation
 
-`POST /checkout/confirm` still exists as a legacy fake-payment path for development/tests. New frontend booking work should use `POST /checkout/session` and the Stripe webhook flow.
+`POST /checkout/confirm` exists only when `app.legacy-checkout.enabled=true`.
+The `dev` and `test` profiles enable it for development and tests; production
+explicitly disables it. New frontend booking work should use
+`POST /checkout/session` and the Stripe webhook flow.
 
 ## Local Setup
 

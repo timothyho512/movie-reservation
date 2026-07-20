@@ -4,10 +4,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import com.example.moviereservation.dto.CheckoutLockResponse;
 import com.example.moviereservation.dto.CheckoutLockRequest;
-import com.example.moviereservation.dto.CheckoutConfirmResponse;
 import com.example.moviereservation.dto.CancelLockRequest;
 import com.example.moviereservation.dto.CancelLockResponse;
-import com.example.moviereservation.dto.CheckoutConfirmRequest;
 import com.example.moviereservation.service.CheckoutService;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -48,16 +46,6 @@ public class CheckoutController {
                 extractPrincipal(authentication),
                 idempotencyKey
         ));
-    }
-
-    @PostMapping("confirm")
-    // Legacy fake-payment path kept temporarily for development/tests.
-    // Real payment flow should use POST /checkout/session and Stripe webhook finalization.
-    public ResponseEntity<CheckoutConfirmResponse> confirmCheckout(
-            @RequestBody CheckoutConfirmRequest request,
-            Authentication authentication
-    ) {
-        return ResponseEntity.ok(checkoutService.confirmCheckout(request, extractPrincipal(authentication)));
     }
 
     @PostMapping("cancel")
